@@ -1,0 +1,45 @@
+{
+  "name": "mcp-mobile-interaction",
+  "version": "1.0.0",
+  "description": "MCP server for interacting with Android and iOS devices/emulators — screenshots, taps, swipes, typing, UI inspection, and more.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "mcp-mobile-interaction": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc && chmod +x dist/index.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "android",
+    "ios",
+    "adb",
+    "simulator",
+    "emulator",
+    "mobile",
+    "testing",
+    "automation",
+    "screenshot",
+    "claude"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pablonortiz/mcp-mobile-interaction.git"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "sharp": "^0.33.5",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "typescript": "^5.7.3"
+  }
+}
