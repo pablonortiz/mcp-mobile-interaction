@@ -1,5 +1,6 @@
 # mcp-mobile-interaction
 
+[![CI](https://img.shields.io/github/actions/workflow/status/pablonortiz/mcp-mobile-interaction/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/pablonortiz/mcp-mobile-interaction/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/mcp-mobile-interaction?style=flat-square&color=CB3837)](https://www.npmjs.com/package/mcp-mobile-interaction)
 [![npm downloads](https://img.shields.io/npm/dm/mcp-mobile-interaction?style=flat-square&color=CB3837)](https://www.npmjs.com/package/mcp-mobile-interaction)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
