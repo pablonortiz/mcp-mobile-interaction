@@ -23,6 +23,7 @@ export interface UiElement {
   resource_id?: string;
   enabled?: boolean;
   focused?: boolean;
+  is_overlay?: boolean;
 }
 
 export interface ScreenInfo {

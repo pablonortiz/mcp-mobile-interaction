@@ -2,8 +2,15 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as android from "../platforms/android.js";
 import * as ios from "../platforms/ios.js";
+import type { UiElement } from "../types.js";
 import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
+
+function hashTree(tree: UiElement[]): string {
+  return tree
+    .map((e) => `${e.type}|${e.text}|${e.clickable}`)
+    .join("\n");
+}
 
 export function registerPressKeyTool(server: McpServer) {
   server.tool(
@@ -47,6 +54,19 @@ export function registerPressKeyTool(server: McpServer) {
         ),
     },
     async ({ platform, device_id, key, observe, observe_delay_ms, observe_stabilize }) => {
+      // For back key: snapshot UI before to detect if screen changed
+      let beforeHash: string | undefined;
+      if (key === "back") {
+        try {
+          const tree = platform === "android"
+            ? await android.getUiTree(device_id)
+            : await ios.getUiTree(device_id);
+          beforeHash = hashTree(tree);
+        } catch {
+          // Best-effort
+        }
+      }
+
       if (platform === "android") {
         await android.pressKey(key, device_id);
       } else {
@@ -61,11 +81,36 @@ export function registerPressKeyTool(server: McpServer) {
         stabilize: observe_stabilize,
       });
 
+      let confirmText = `Pressed "${key}" on ${platform} device`;
+
+      // For back: detect if screen unchanged and add hint
+      if (key === "back" && beforeHash !== undefined) {
+        try {
+          // Ensure enough time has passed for back to take effect
+          if (!observe || observe === "none") {
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+
+          const afterTree = platform === "android"
+            ? await android.getUiTree(device_id)
+            : await ios.getUiTree(device_id);
+          const afterHash = hashTree(afterTree);
+
+          if (beforeHash === afterHash) {
+            const overlay = afterTree.find((el) => el.is_overlay);
+            if (overlay) {
+              confirmText += `\nScreen unchanged after back press — an overlay/scrim was detected (${overlay.resource_id ?? "unnamed"} at ${overlay.center_x},${overlay.center_y}). Tap it to dismiss the modal or bottom sheet.`;
+            } else {
+              confirmText += "\nScreen unchanged after back press — a modal or bottom sheet may be open. Try tapping outside it to dismiss.";
+            }
+          }
+        } catch {
+          // Best-effort
+        }
+      }
+
       return {
-        content: buildResponseContent(
-          `Pressed "${key}" on ${platform} device`,
-          observation,
-        ),
+        content: buildResponseContent(confirmText, observation),
       };
     },
   );

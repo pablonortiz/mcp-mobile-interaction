@@ -1,5 +1,6 @@
 import { exec, execBuffer } from "../utils/exec.js";
 import type { Device, UiElement, ScreenInfo } from "../types.js";
+import { annotateOverlays } from "../utils/overlay-detect.js";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -278,7 +279,7 @@ export async function getUiTree(deviceId?: string): Promise<UiElement[]> {
     const output = await exec(`idb ui describe-all --udid ${id}`, {
       timeout: 30_000,
     });
-    return parseIdbDescribeAll(output);
+    return annotateOverlays(parseIdbDescribeAll(output));
   }
 
   // Fallback: accessibility audit via simctl (limited)
@@ -287,7 +288,7 @@ export async function getUiTree(deviceId?: string): Promise<UiElement[]> {
       `xcrun simctl ui ${id} describe-all`,
       { timeout: 30_000 },
     );
-    return parseIdbDescribeAll(output);
+    return annotateOverlays(parseIdbDescribeAll(output));
   } catch {
     throw new Error(
       "UI tree inspection requires idb for iOS. Install it: brew install idb-companion && pip install fb-idb",

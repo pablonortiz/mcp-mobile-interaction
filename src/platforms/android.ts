@@ -1,5 +1,6 @@
 import { exec, execBuffer } from "../utils/exec.js";
 import type { Device, UiElement, ScreenInfo } from "../types.js";
+import { annotateOverlays } from "../utils/overlay-detect.js";
 
 function adb(deviceId: string, cmd: string): string {
   return `adb -s ${deviceId} ${cmd}`;
@@ -159,7 +160,7 @@ export async function getUiTree(deviceId?: string): Promise<UiElement[]> {
       const xml = await strategy();
       if (xml) {
         const elements = parseUiXml(xml);
-        if (elements.length > 0) return elements;
+        if (elements.length > 0) return annotateOverlays(elements);
       }
     } catch {
       // Try next strategy
