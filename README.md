@@ -78,8 +78,8 @@ All tools accept a `platform` parameter (`"android"` or `"ios"`) and an optional
 
 | Tool | Description |
 |------|-------------|
-| `tap` | Tap at (x, y) coordinates |
-| `double_tap` | Double-tap at (x, y) coordinates |
+| `tap` | Tap at (x, y) coordinates (native resolution) |
+| `double_tap` | Double-tap at (x, y) coordinates (native resolution) |
 | `long_press` | Long-press at (x, y) with configurable duration |
 | `swipe` | Swipe between coordinates or by direction (up/down/left/right) |
 | `type_text` | Type text into the focused input field |
@@ -94,6 +94,30 @@ All tools accept a `platform` parameter (`"android"` or `"ios"`) and an optional
 |------|-------------|
 | `wait_for_element` | Poll until an element matching text/type criteria appears on screen |
 | `wait_for_stable` | Poll until the screen stops changing (two consecutive UI snapshots match) |
+
+## Coordinate System
+
+Screenshots are scaled down by default (`scale=0.5`) to save bandwidth, while `get_ui_tree` and all coordinate-based tools (`tap`, `double_tap`, `long_press`, `swipe`) work in **native device resolution**.
+
+Every screenshot response includes the native dimensions and scale factor to make this explicit:
+
+```
+Screenshot captured (540x1140, scale=0.5 of native 1080x2280).
+Coordinate tools expect native resolution — multiply screenshot pixel
+positions by 2 to convert, or pass screenshot_scale=0.5.
+```
+
+**Two ways to handle this:**
+
+1. **Manual conversion** — multiply the position you see in the screenshot by `1/scale` (e.g. `×2` for `scale=0.5`)
+2. **Automatic conversion** — pass `screenshot_scale` to coordinate tools and they convert for you:
+
+```
+tap(x=270, y=570, screenshot_scale=0.5)
+→ taps at native (540, 1140)
+```
+
+The `screenshot_scale` parameter is available on `tap`, `double_tap`, `long_press`, and `swipe`.
 
 ## Observe Mode
 
