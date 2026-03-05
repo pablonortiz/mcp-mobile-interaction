@@ -23,7 +23,7 @@ import { registerGetScreenStateTool } from "./tools/get-screen-state.js";
 
 const server = new McpServer({
   name: "mcp-mobile-interaction",
-  version: "1.2.0",
+  version: "1.2.1",
 });
 
 registerListDevicesTool(server);
