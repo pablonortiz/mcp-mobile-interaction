@@ -17,15 +17,15 @@ import { registerLaunchAppTool } from "./tools/launch-app.js";
 import { registerOpenUrlTool } from "./tools/open-url.js";
 import { registerWaitForElementTool } from "./tools/wait-for-element.js";
 import { registerWaitForStableTool } from "./tools/wait-for-stable.js";
+import { registerWaitForElementGoneTool } from "./tools/wait-for-element-gone.js";
 import { registerTapElementTool } from "./tools/tap-element.js";
 import { registerGetScreenStateTool } from "./tools/get-screen-state.js";
 
 const server = new McpServer({
   name: "mcp-mobile-interaction",
-  version: "1.0.0",
+  version: "1.2.0",
 });
 
-// Register all 16 tools
 registerListDevicesTool(server);
 registerScreenshotTool(server);
 registerTapTool(server);
@@ -40,6 +40,7 @@ registerLaunchAppTool(server);
 registerOpenUrlTool(server);
 registerWaitForElementTool(server);
 registerWaitForStableTool(server);
+registerWaitForElementGoneTool(server);
 registerTapElementTool(server);
 registerGetScreenStateTool(server);
 

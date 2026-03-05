@@ -2,16 +2,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as android from "../platforms/android.js";
 import * as ios from "../platforms/ios.js";
-import type { UiElement } from "../types.js";
 import { performObservation } from "../utils/observe.js";
-import { filterUiElements } from "../utils/ui-filter.js";
 import { buildResponseContent } from "../utils/format-response.js";
-import { matchElement, describeCriteria, type MatchCriteria } from "../utils/element-matcher.js";
+import { matchElement, hasCriteria, describeCriteria, type MatchCriteria } from "../utils/element-matcher.js";
 
-export function registerWaitForElementTool(server: McpServer) {
+export function registerWaitForElementGoneTool(server: McpServer) {
   server.tool(
-    "wait_for_element",
-    "Poll the UI tree until an element matching the criteria appears on screen. Returns matched elements and optionally the full UI tree or screenshot.",
+    "wait_for_element_gone",
+    "Poll the UI tree until an element matching the criteria disappears from screen. Useful for waiting until loading indicators, skeletons, or dialogs go away.",
     {
       platform: z.enum(["android", "ios"]).describe("Target platform"),
       device_id: z
@@ -21,23 +19,19 @@ export function registerWaitForElementTool(server: McpServer) {
       text_contains: z
         .string()
         .optional()
-        .describe("Wait for element whose text contains this substring (case-insensitive)"),
+        .describe("Wait for element with this text substring to disappear (case-insensitive)"),
       text_exact: z
         .string()
         .optional()
-        .describe("Wait for element whose text matches exactly"),
+        .describe("Wait for element with this exact text to disappear"),
       resource_id: z
         .string()
         .optional()
-        .describe("Wait for element whose resource_id contains this substring (case-insensitive)"),
+        .describe("Wait for element with this resource_id substring to disappear (case-insensitive)"),
       type_contains: z
         .string()
         .optional()
         .describe("Filter by element type containing this substring (case-insensitive)"),
-      clickable: z
-        .boolean()
-        .optional()
-        .describe("If set, only match elements with this clickable state"),
       timeout_ms: z
         .number()
         .int()
@@ -51,7 +45,7 @@ export function registerWaitForElementTool(server: McpServer) {
       observe: z
         .enum(["none", "ui_tree", "screenshot", "both"])
         .optional()
-        .describe("Additional observation after element found. Default: none"),
+        .describe("Capture screen state after element disappears. Default: none"),
     },
     async ({
       platform,
@@ -60,23 +54,32 @@ export function registerWaitForElementTool(server: McpServer) {
       text_exact,
       resource_id,
       type_contains,
-      clickable,
       timeout_ms,
       poll_interval_ms,
       observe,
     }) => {
-      const timeout = timeout_ms ?? 10_000;
-      const pollInterval = poll_interval_ms ?? 500;
-      const start = Date.now();
       const criteria: MatchCriteria = {
         text_exact,
         text_contains,
         resource_id,
         type_contains,
-        clickable,
       };
 
-      let lastTree: UiElement[] = [];
+      if (!hasCriteria(criteria)) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "Error: Provide at least one criterion (text_contains, text_exact, resource_id, or type_contains).",
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const timeout = timeout_ms ?? 10_000;
+      const pollInterval = poll_interval_ms ?? 500;
+      const start = Date.now();
 
       while (Date.now() - start < timeout) {
         const tree =
@@ -84,10 +87,11 @@ export function registerWaitForElementTool(server: McpServer) {
             ? await android.getUiTree(device_id)
             : await ios.getUiTree(device_id);
 
-        lastTree = tree;
         const matches = tree.filter((el) => matchElement(el, criteria));
 
-        if (matches.length > 0) {
+        if (matches.length === 0) {
+          const elapsed = Date.now() - start;
+
           const observation = await performObservation({
             mode: observe ?? "none",
             platform,
@@ -96,23 +100,22 @@ export function registerWaitForElementTool(server: McpServer) {
             stabilize: false,
           });
 
-          const matchText = `Found ${matches.length} matching element(s) after ${Date.now() - start}ms:\n${JSON.stringify(matches, null, 2)}`;
-
           return {
-            content: buildResponseContent(matchText, observation),
+            content: buildResponseContent(
+              `Element gone after ${elapsed}ms (${describeCriteria(criteria)})`,
+              observation,
+            ),
           };
         }
 
         await new Promise((resolve) => setTimeout(resolve, pollInterval));
       }
 
-      // Timeout — return error with last UI tree for debugging
-      const filtered = filterUiElements(lastTree);
       return {
         content: [
           {
             type: "text" as const,
-            text: `Timeout after ${timeout}ms: no element found matching criteria (${describeCriteria(criteria)}). Last UI tree (${filtered.length} relevant elements):\n${JSON.stringify(filtered, null, 2)}`,
+            text: `Timeout after ${timeout}ms: element still present (${describeCriteria(criteria)}).`,
           },
         ],
         isError: true,

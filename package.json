@@ -1,6 +1,6 @@
 {
   "name": "mcp-mobile-interaction",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "MCP server for interacting with Android and iOS devices/emulators — screenshots, taps, swipes, typing, UI inspection, and more.",
   "type": "module",
   "main": "dist/index.js",

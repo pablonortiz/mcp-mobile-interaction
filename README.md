@@ -70,7 +70,7 @@ All tools accept a `platform` parameter (`"android"` or `"ios"`) and an optional
 |------|-------------|
 | `list_devices` | List connected devices and emulators/simulators |
 | `screenshot` | Capture a screenshot (returns base64 JPEG) |
-| `get_ui_tree` | Get a flat list of UI elements with bounds and center coordinates |
+| `get_ui_tree` | Get a flat list of UI elements with optional filters (`only_clickable`, `only_with_text`, `type_filter`, `resource_id_contains`) |
 | `get_screen_info` | Get screen dimensions, density, and orientation |
 | `get_screen_state` | Get UI tree + screenshot in a single call (saves a round-trip) |
 
@@ -86,13 +86,14 @@ All tools accept a `platform` parameter (`"android"` or `"ios"`) and an optional
 | `press_key` | Press a key (home, back, enter, delete, volume_up, volume_down, power, tab, recent_apps) |
 | `launch_app` | Launch an app by package name / bundle ID |
 | `open_url` | Open a URL or deep link |
-| `tap_element` | Find an element by text and tap it (combines get_ui_tree + tap) |
+| `tap_element` | Find element by text, resource_id, or type and tap it. Supports `scroll_to_find` and `wait_for` |
 
 ### Waiting Tools
 
 | Tool | Description |
 |------|-------------|
-| `wait_for_element` | Poll until an element matching text/type criteria appears on screen |
+| `wait_for_element` | Poll until an element matching text/type/resource_id criteria appears on screen |
+| `wait_for_element_gone` | Poll until a matching element disappears (loading spinners, skeletons, dialogs) |
 | `wait_for_stable` | Poll until the screen stops changing (two consecutive UI snapshots match) |
 
 ## Coordinate System
@@ -159,7 +160,23 @@ Claude will call `screenshot` with `platform: "android"` and display the image.
 "Open Settings on my iOS simulator, then scroll down and tap General"
 ```
 
-Claude will use `launch_app`, `tap_element`, and `swipe` to navigate.
+Claude will use `launch_app` and `tap_element` with `scroll_to_find: true` to navigate.
+
+### Tap elements without visible text
+
+```
+"Tap the start session button"
+```
+
+Claude will use `tap_element` with `resource_id: "start-session-button"` to find icon buttons by their resource ID.
+
+### Wait for loading to finish
+
+```
+"Tap 'Picking Flow', wait for the loading to finish, then tap the first session"
+```
+
+Claude will use `tap_element`, then `wait_for_element_gone` with the loading indicator's resource_id, then proceed.
 
 ### Run a test flow efficiently
 
@@ -175,7 +192,7 @@ Claude will use `tap_element` with `observe_stabilize: true` and `wait_for_eleme
 "What buttons are visible on the screen?"
 ```
 
-Claude will use `get_ui_tree` to list all visible elements with their types, text, and coordinates.
+Claude will use `get_ui_tree` with `only_clickable: true` to list only interactive elements.
 
 ## How It Works
 

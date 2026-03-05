@@ -5,11 +5,41 @@ import * as ios from "../platforms/ios.js";
 import type { UiElement } from "../types.js";
 import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
+import { matchElement, describeCriteria, type MatchCriteria } from "../utils/element-matcher.js";
+
+function getUiTree(platform: string, deviceId?: string) {
+  return platform === "android"
+    ? android.getUiTree(deviceId)
+    : ios.getUiTree(deviceId);
+}
+
+function tap(platform: string, x: number, y: number, deviceId?: string) {
+  return platform === "android"
+    ? android.tap(x, y, deviceId)
+    : ios.tap(x, y, deviceId);
+}
+
+async function swipeDown(platform: string, deviceId?: string) {
+  const screenInfo =
+    platform === "android"
+      ? await android.getScreenInfo(deviceId)
+      : await ios.getScreenInfo(deviceId);
+
+  const cx = Math.round(screenInfo.width / 2);
+  const cy = Math.round(screenInfo.height / 2);
+  const dist = Math.round(screenInfo.height * 0.3);
+
+  if (platform === "android") {
+    await android.swipe(cx, cy + dist, cx, cy - dist, 300, deviceId);
+  } else {
+    await ios.swipe(cx, cy + dist, cx, cy - dist, 300, deviceId);
+  }
+}
 
 export function registerTapElementTool(server: McpServer) {
   server.tool(
     "tap_element",
-    "Find a UI element by text and tap its center. Combines get_ui_tree + tap in one call. Optionally waits for the element to appear first.",
+    "Find a UI element by text, resource_id, or type and tap its center. Combines get_ui_tree + tap in one call. Optionally waits for the element, or scrolls to find it.",
     {
       platform: z.enum(["android", "ios"]).describe("Target platform"),
       device_id: z
@@ -24,6 +54,10 @@ export function registerTapElementTool(server: McpServer) {
         .string()
         .optional()
         .describe("Tap element whose text matches exactly"),
+      resource_id: z
+        .string()
+        .optional()
+        .describe("Tap element whose resource_id contains this substring (case-insensitive). Useful for icon buttons without visible text."),
       index: z
         .number()
         .int()
@@ -33,6 +67,15 @@ export function registerTapElementTool(server: McpServer) {
         .boolean()
         .optional()
         .describe("If true, poll until the element appears before tapping. Default: false"),
+      scroll_to_find: z
+        .boolean()
+        .optional()
+        .describe("If true, scroll down iteratively to find the element before tapping. Default: false"),
+      max_scrolls: z
+        .number()
+        .int()
+        .optional()
+        .describe("Maximum number of scrolls when scroll_to_find is true. Default: 5"),
       timeout_ms: z
         .number()
         .int()
@@ -57,19 +100,24 @@ export function registerTapElementTool(server: McpServer) {
       device_id,
       text_contains,
       text_exact,
+      resource_id,
       index: matchIndex,
       wait_for,
+      scroll_to_find,
+      max_scrolls,
       timeout_ms,
       observe,
       observe_delay_ms,
       observe_stabilize,
     }) => {
-      if (!text_contains && !text_exact) {
+      const criteria: MatchCriteria = { text_exact, text_contains, resource_id };
+
+      if (!text_contains && !text_exact && !resource_id) {
         return {
           content: [
             {
               type: "text" as const,
-              text: "Error: Provide either text_contains or text_exact to identify the element.",
+              text: "Error: Provide at least one of text_contains, text_exact, or resource_id to identify the element.",
             },
           ],
           isError: true,
@@ -79,28 +127,41 @@ export function registerTapElementTool(server: McpServer) {
       const targetIndex = matchIndex ?? 0;
       const timeout = timeout_ms ?? 10_000;
 
-      function matchElement(el: UiElement): boolean {
-        if (text_exact !== undefined && el.text !== text_exact) return false;
-        if (
-          text_contains !== undefined &&
-          !el.text.toLowerCase().includes(text_contains.toLowerCase())
-        )
-          return false;
-        return true;
-      }
-
       let target: UiElement | undefined;
 
-      if (wait_for) {
+      if (scroll_to_find) {
+        // Scroll down iteratively to find element
+        const scrollLimit = max_scrolls ?? 5;
+        for (let i = 0; i <= scrollLimit; i++) {
+          const tree = await getUiTree(platform, device_id);
+          const matches = tree.filter((el) => matchElement(el, criteria));
+          if (matches.length > targetIndex) {
+            target = matches[targetIndex];
+            break;
+          }
+          if (i < scrollLimit) {
+            await swipeDown(platform, device_id);
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+        }
+
+        if (!target) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Element not found after ${scrollLimit} scrolls (${describeCriteria(criteria)}).`,
+              },
+            ],
+            isError: true,
+          };
+        }
+      } else if (wait_for) {
         // Poll until element appears
         const start = Date.now();
         while (Date.now() - start < timeout) {
-          const tree =
-            platform === "android"
-              ? await android.getUiTree(device_id)
-              : await ios.getUiTree(device_id);
-
-          const matches = tree.filter(matchElement);
+          const tree = await getUiTree(platform, device_id);
+          const matches = tree.filter((el) => matchElement(el, criteria));
           if (matches.length > targetIndex) {
             target = matches[targetIndex];
             break;
@@ -113,7 +174,7 @@ export function registerTapElementTool(server: McpServer) {
             content: [
               {
                 type: "text" as const,
-                text: `Timeout after ${timeout}ms: element not found (text_contains: "${text_contains ?? ""}", text_exact: "${text_exact ?? ""}")`,
+                text: `Timeout after ${timeout}ms: element not found (${describeCriteria(criteria)})`,
               },
             ],
             isError: true,
@@ -121,18 +182,14 @@ export function registerTapElementTool(server: McpServer) {
         }
       } else {
         // Single attempt
-        const tree =
-          platform === "android"
-            ? await android.getUiTree(device_id)
-            : await ios.getUiTree(device_id);
-
-        const matches = tree.filter(matchElement);
+        const tree = await getUiTree(platform, device_id);
+        const matches = tree.filter((el) => matchElement(el, criteria));
         if (matches.length === 0) {
           return {
             content: [
               {
                 type: "text" as const,
-                text: `Element not found (text_contains: "${text_contains ?? ""}", text_exact: "${text_exact ?? ""}"). ${tree.length} elements on screen.`,
+                text: `Element not found (${describeCriteria(criteria)}). ${tree.length} elements on screen.`,
               },
             ],
             isError: true,
@@ -153,11 +210,7 @@ export function registerTapElementTool(server: McpServer) {
       }
 
       // Tap the element's center
-      if (platform === "android") {
-        await android.tap(target.center_x, target.center_y, device_id);
-      } else {
-        await ios.tap(target.center_x, target.center_y, device_id);
-      }
+      await tap(platform, target.center_x, target.center_y, device_id);
 
       const observation = await performObservation({
         mode: observe ?? "none",
@@ -167,9 +220,10 @@ export function registerTapElementTool(server: McpServer) {
         stabilize: observe_stabilize,
       });
 
+      const label = target.text || target.resource_id || target.type;
       return {
         content: buildResponseContent(
-          `Tapped element "${target.text}" (${target.type}) at (${target.center_x}, ${target.center_y}) on ${platform} device`,
+          `Tapped element "${label}" (${target.type}) at (${target.center_x}, ${target.center_y}) on ${platform} device`,
           observation,
         ),
       };
