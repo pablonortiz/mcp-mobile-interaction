@@ -17,24 +17,28 @@ export function registerSwipeTool(server: McpServer) {
         .describe("Device ID. Omit to use the first connected device."),
       start_x: z
         .number()
-        .int()
         .optional()
-        .describe("Start X coordinate. Required if direction is not set."),
+        .describe("Start X coordinate in native device resolution. Required if direction is not set."),
       start_y: z
         .number()
-        .int()
         .optional()
-        .describe("Start Y coordinate. Required if direction is not set."),
+        .describe("Start Y coordinate in native device resolution. Required if direction is not set."),
       end_x: z
         .number()
-        .int()
         .optional()
-        .describe("End X coordinate. Required if direction is not set."),
+        .describe("End X coordinate in native device resolution. Required if direction is not set."),
       end_y: z
         .number()
-        .int()
         .optional()
-        .describe("End Y coordinate. Required if direction is not set."),
+        .describe("End Y coordinate in native device resolution. Required if direction is not set."),
+      screenshot_scale: z
+        .number()
+        .min(0.1)
+        .max(1.0)
+        .optional()
+        .describe(
+          "If coordinates come from a scaled screenshot, provide the scale factor (e.g. 0.5). Coordinates will be auto-converted to native resolution.",
+        ),
       direction: z
         .enum(["up", "down", "left", "right"])
         .optional()
@@ -71,6 +75,7 @@ export function registerSwipeTool(server: McpServer) {
       start_y,
       end_x,
       end_y,
+      screenshot_scale,
       direction,
       duration_ms,
       observe,
@@ -78,6 +83,7 @@ export function registerSwipeTool(server: McpServer) {
       observe_stabilize,
     }) => {
       const duration = duration_ms ?? 300;
+      const scaleFn = (v: number) => screenshot_scale ? Math.round(v / screenshot_scale) : Math.round(v);
       let sx: number, sy: number, ex: number, ey: number;
 
       if (direction) {
@@ -123,10 +129,10 @@ export function registerSwipeTool(server: McpServer) {
             isError: true,
           };
         }
-        sx = start_x;
-        sy = start_y;
-        ex = end_x;
-        ey = end_y;
+        sx = scaleFn(start_x);
+        sy = scaleFn(start_y);
+        ex = scaleFn(end_x);
+        ey = scaleFn(end_y);
       }
 
       if (platform === "android") {

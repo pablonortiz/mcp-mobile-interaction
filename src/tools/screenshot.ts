@@ -33,7 +33,7 @@ export function registerScreenshotTool(server: McpServer) {
           ? await android.screenshot(device_id)
           : await ios.screenshot(device_id);
 
-      const { base64, width, height } = await compressScreenshot(rawBuffer, {
+      const { base64, width, height, nativeWidth, nativeHeight } = await compressScreenshot(rawBuffer, {
         quality: quality ?? 50,
         scale: scale ?? 0.5,
       });
@@ -47,7 +47,7 @@ export function registerScreenshotTool(server: McpServer) {
           },
           {
             type: "text" as const,
-            text: `Screenshot captured (${width}x${height}, platform: ${platform})`,
+            text: `Screenshot captured (${width}x${height}, scale=${scale ?? 0.5} of native ${nativeWidth}x${nativeHeight}). Coordinate tools (tap, swipe, etc.) expect native resolution — multiply screenshot pixel positions by ${Math.round(1 / (scale ?? 0.5))} to convert, or pass screenshot_scale=${scale ?? 0.5}.`,
           },
         ],
       };

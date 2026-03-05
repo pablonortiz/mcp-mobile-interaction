@@ -2,7 +2,7 @@ import type { UiElement } from "../types.js";
 
 export interface ObservationResult {
   uiTree?: UiElement[];
-  screenshot?: { base64: string; width: number; height: number };
+  screenshot?: { base64: string; width: number; height: number; nativeWidth: number; nativeHeight: number; scale: number };
 }
 
 type ContentItem =
@@ -38,7 +38,7 @@ export function buildResponseContent(
     });
     content.push({
       type: "text" as const,
-      text: `Screenshot captured (${observation.screenshot.width}x${observation.screenshot.height})`,
+      text: `Screenshot captured (${observation.screenshot.width}x${observation.screenshot.height}, scale=${observation.screenshot.scale} of native ${observation.screenshot.nativeWidth}x${observation.screenshot.nativeHeight}). Coordinate tools expect native resolution — multiply screenshot pixel positions by ${Math.round(1 / observation.screenshot.scale)} to convert, or pass screenshot_scale=${observation.screenshot.scale}.`,
     });
   }
 

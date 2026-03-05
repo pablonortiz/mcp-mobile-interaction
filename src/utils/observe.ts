@@ -125,7 +125,7 @@ async function getUiTree(
 async function getScreenshot(
   platform: Platform,
   deviceId?: string,
-): Promise<{ base64: string; width: number; height: number }> {
+): Promise<{ base64: string; width: number; height: number; nativeWidth: number; nativeHeight: number; scale: number }> {
   const buffer =
     platform === "android"
       ? await android.screenshot(deviceId)

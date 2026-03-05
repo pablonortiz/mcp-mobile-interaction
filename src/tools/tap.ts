@@ -15,8 +15,16 @@ export function registerTapTool(server: McpServer) {
         .string()
         .optional()
         .describe("Device ID. Omit to use the first connected device."),
-      x: z.number().int().describe("X coordinate to tap"),
-      y: z.number().int().describe("Y coordinate to tap"),
+      x: z.number().describe("X coordinate to tap (in native device resolution by default)"),
+      y: z.number().describe("Y coordinate to tap (in native device resolution by default)"),
+      screenshot_scale: z
+        .number()
+        .min(0.1)
+        .max(1.0)
+        .optional()
+        .describe(
+          "If coordinates come from a scaled screenshot, provide the scale factor (e.g. 0.5). Coordinates will be auto-converted to native resolution.",
+        ),
       observe: z
         .enum(["none", "ui_tree", "screenshot", "both"])
         .optional()
@@ -35,11 +43,14 @@ export function registerTapTool(server: McpServer) {
           "If true, wait for UI to stabilize instead of fixed delay. Default: false",
         ),
     },
-    async ({ platform, device_id, x, y, observe, observe_delay_ms, observe_stabilize }) => {
+    async ({ platform, device_id, x, y, screenshot_scale, observe, observe_delay_ms, observe_stabilize }) => {
+      const nativeX = screenshot_scale ? Math.round(x / screenshot_scale) : Math.round(x);
+      const nativeY = screenshot_scale ? Math.round(y / screenshot_scale) : Math.round(y);
+
       if (platform === "android") {
-        await android.tap(x, y, device_id);
+        await android.tap(nativeX, nativeY, device_id);
       } else {
-        await ios.tap(x, y, device_id);
+        await ios.tap(nativeX, nativeY, device_id);
       }
 
       const observation = await performObservation({
@@ -52,7 +63,7 @@ export function registerTapTool(server: McpServer) {
 
       return {
         content: buildResponseContent(
-          `Tapped at (${x}, ${y}) on ${platform} device`,
+          `Tapped at (${nativeX}, ${nativeY}) on ${platform} device${screenshot_scale ? ` (converted from screenshot coords ${x},${y} with scale=${screenshot_scale})` : ""}`,
           observation,
         ),
       };

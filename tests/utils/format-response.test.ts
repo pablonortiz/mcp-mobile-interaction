@@ -37,7 +37,7 @@ describe("buildResponseContent", () => {
 
   it("appends screenshot image and dimension text when observation includes screenshot", () => {
     const observation: ObservationResult = {
-      screenshot: { base64: "abc123", width: 540, height: 960 },
+      screenshot: { base64: "abc123", width: 540, height: 960, nativeWidth: 1080, nativeHeight: 1920, scale: 0.5 },
     };
     const result = buildResponseContent("Captured", observation);
     expect(result).toHaveLength(3);
@@ -49,7 +49,7 @@ describe("buildResponseContent", () => {
     });
     expect(result[2]).toEqual({
       type: "text",
-      text: "Screenshot captured (540x960)",
+      text: "Screenshot captured (540x960, scale=0.5 of native 1080x1920). Coordinate tools expect native resolution — multiply screenshot pixel positions by 2 to convert, or pass screenshot_scale=0.5.",
     });
   });
 
@@ -66,7 +66,7 @@ describe("buildResponseContent", () => {
           clickable: false,
         },
       ],
-      screenshot: { base64: "imgdata", width: 1080, height: 1920 },
+      screenshot: { base64: "imgdata", width: 1080, height: 1920, nativeWidth: 2160, nativeHeight: 3840, scale: 0.5 },
     };
     const result = buildResponseContent("Action done", observation);
     // confirmation + ui tree text + image + screenshot dimension text

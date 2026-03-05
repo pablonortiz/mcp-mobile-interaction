@@ -5,10 +5,19 @@ export interface CompressOptions {
   scale?: number; // 0.1-1.0, default 0.5
 }
 
+export interface CompressResult {
+  base64: string;
+  width: number;
+  height: number;
+  nativeWidth: number;
+  nativeHeight: number;
+  scale: number;
+}
+
 export async function compressScreenshot(
   input: Buffer,
   options?: CompressOptions,
-): Promise<{ base64: string; width: number; height: number }> {
+): Promise<CompressResult> {
   const quality = options?.quality ?? 50;
   const scale = options?.scale ?? 0.5;
 
@@ -30,5 +39,8 @@ export async function compressScreenshot(
     base64: buffer.toString("base64"),
     width: newWidth,
     height: newHeight,
+    nativeWidth: origWidth,
+    nativeHeight: origHeight,
+    scale,
   };
 }

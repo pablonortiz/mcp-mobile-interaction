@@ -57,7 +57,7 @@ export function registerGetScreenStateTool(server: McpServer) {
       }
 
       if (screenshotBuffer) {
-        const { base64, width, height } = await compressScreenshot(
+        const { base64, width, height, nativeWidth, nativeHeight, scale } = await compressScreenshot(
           screenshotBuffer,
         );
         content.push({
@@ -67,7 +67,7 @@ export function registerGetScreenStateTool(server: McpServer) {
         });
         content.push({
           type: "text" as const,
-          text: `Screenshot captured (${width}x${height})`,
+          text: `Screenshot captured (${width}x${height}, scale=${scale} of native ${nativeWidth}x${nativeHeight}). Coordinate tools expect native resolution — multiply screenshot pixel positions by ${Math.round(1 / scale)} to convert, or pass screenshot_scale=${scale}.`,
         });
       }
 
