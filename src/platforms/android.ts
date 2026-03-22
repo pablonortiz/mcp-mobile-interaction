@@ -150,6 +150,39 @@ export async function pressKey(
   await exec(adb(id, `shell input keyevent ${code}`));
 }
 
+const LOG_LEVEL_MAP: Record<string, string> = {
+  verbose: "V",
+  debug: "D",
+  info: "I",
+  warn: "W",
+  error: "E",
+};
+
+export async function getLogs(
+  deviceId: string,
+  options: { tag?: string; level?: string; lines?: number },
+): Promise<string> {
+  const parts = [adb(deviceId, "logcat -d -v time")];
+
+  if (options.tag) {
+    parts.length = 0;
+    parts.push(adb(deviceId, `logcat -d -v time -s ${options.tag}`));
+  } else if (options.level) {
+    const levelLetter = LOG_LEVEL_MAP[options.level] ?? "I";
+    parts.length = 0;
+    parts.push(adb(deviceId, `logcat -d -v time *:${levelLetter}`));
+  }
+
+  const lines = options.lines ?? 50;
+  const cmd = `${parts[0]} | tail -n ${lines}`;
+
+  return exec(cmd, { timeout: 30_000 });
+}
+
+export async function clearLogs(deviceId: string): Promise<void> {
+  await exec(adb(deviceId, "logcat -c"), { timeout: 10_000 });
+}
+
 export async function clearAppData(
   deviceId: string,
   packageName: string,

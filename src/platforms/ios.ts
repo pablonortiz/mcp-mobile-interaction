@@ -226,6 +226,39 @@ export async function typeText(
   }
 }
 
+const IOS_LOG_LEVEL_MAP: Record<string, string> = {
+  verbose: "debug",
+  debug: "debug",
+  info: "info",
+  warn: "default",
+  error: "error",
+};
+
+export async function getLogs(
+  deviceId: string,
+  options: { tag?: string; level?: string; lines?: number },
+): Promise<string> {
+  const predicates: string[] = [];
+
+  if (options.tag) {
+    predicates.push(`subsystem == "${options.tag}"`);
+  }
+  if (options.level) {
+    const logType = IOS_LOG_LEVEL_MAP[options.level] ?? "info";
+    predicates.push(`messageType >= ${logType}`);
+  }
+
+  let cmd = `xcrun simctl spawn ${deviceId} log show --last 1m --style compact`;
+  if (predicates.length > 0) {
+    cmd += ` --predicate '${predicates.join(" AND ")}'`;
+  }
+
+  const lines = options.lines ?? 50;
+  cmd += ` | tail -n ${lines}`;
+
+  return exec(cmd, { timeout: 30_000 });
+}
+
 export async function clearAppData(
   deviceId: string,
   bundleId: string,

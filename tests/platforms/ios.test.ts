@@ -212,6 +212,26 @@ describe("getUiTree", () => {
 });
 
 // ---------------------------------------------------------------------------
+// getLogs — command construction
+// ---------------------------------------------------------------------------
+describe("getLogs", () => {
+  it("builds log show command with tail", async () => {
+    mockExec.mockResolvedValueOnce("log line");
+    await iosMod.getLogs("sim-1", { lines: 30 });
+    const logCall = mockExec.mock.calls[0][0] as string;
+    expect(logCall).toContain("xcrun simctl spawn sim-1 log show --last 1m --style compact");
+    expect(logCall).toContain("tail -n 30");
+  });
+
+  it("adds subsystem predicate when tag is provided", async () => {
+    mockExec.mockResolvedValueOnce("tagged log");
+    await iosMod.getLogs("sim-1", { tag: "com.apple.UIKit", lines: 10 });
+    const logCall = mockExec.mock.calls[0][0] as string;
+    expect(logCall).toContain('subsystem == "com.apple.UIKit"');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // clearAppData — command construction
 // ---------------------------------------------------------------------------
 describe("clearAppData", () => {

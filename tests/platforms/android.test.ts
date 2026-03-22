@@ -302,6 +302,50 @@ describe("pressKey", () => {
 });
 
 // ---------------------------------------------------------------------------
+// getLogs / clearLogs
+// ---------------------------------------------------------------------------
+describe("getLogs", () => {
+  it("builds logcat command with tail for line limit", async () => {
+    mockExec.mockResolvedValueOnce("line1\nline2\nline3");
+    const output = await androidMod.getLogs("dev1", { lines: 10 });
+    expect(mockExec).toHaveBeenCalledWith(
+      "adb -s dev1 logcat -d -v time | tail -n 10",
+      { timeout: 30_000 }
+    );
+    expect(output).toBe("line1\nline2\nline3");
+  });
+
+  it("uses -s flag when tag is provided", async () => {
+    mockExec.mockResolvedValueOnce("tagged log");
+    await androidMod.getLogs("dev1", { tag: "ReactNativeJS", lines: 50 });
+    expect(mockExec).toHaveBeenCalledWith(
+      "adb -s dev1 logcat -d -v time -s ReactNativeJS | tail -n 50",
+      { timeout: 30_000 }
+    );
+  });
+
+  it("uses level filter when level is provided", async () => {
+    mockExec.mockResolvedValueOnce("error log");
+    await androidMod.getLogs("dev1", { level: "error", lines: 20 });
+    expect(mockExec).toHaveBeenCalledWith(
+      "adb -s dev1 logcat -d -v time *:E | tail -n 20",
+      { timeout: 30_000 }
+    );
+  });
+});
+
+describe("clearLogs", () => {
+  it("sends logcat -c command", async () => {
+    mockExec.mockResolvedValueOnce("");
+    await androidMod.clearLogs("dev1");
+    expect(mockExec).toHaveBeenCalledWith(
+      "adb -s dev1 logcat -c",
+      { timeout: 10_000 }
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // clearAppData / clearAppCache
 // ---------------------------------------------------------------------------
 describe("clearAppData", () => {
