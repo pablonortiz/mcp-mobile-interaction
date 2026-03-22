@@ -212,6 +212,26 @@ describe("getUiTree", () => {
 });
 
 // ---------------------------------------------------------------------------
+// setClipboard — command construction
+// ---------------------------------------------------------------------------
+describe("setClipboard", () => {
+  it("uses pbcopy via echo pipe", async () => {
+    mockExec.mockResolvedValueOnce("");
+    await iosMod.setClipboard("hello clipboard");
+    expect(mockExec).toHaveBeenCalledWith(
+      "echo 'hello clipboard' | pbcopy"
+    );
+  });
+
+  it("escapes single quotes in text", async () => {
+    mockExec.mockResolvedValueOnce("");
+    await iosMod.setClipboard("it's a test");
+    const cmd = mockExec.mock.calls[0][0] as string;
+    expect(cmd).toContain("it'\\''s a test");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // getLogs — command construction
 // ---------------------------------------------------------------------------
 describe("getLogs", () => {

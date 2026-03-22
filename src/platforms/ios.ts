@@ -226,6 +226,12 @@ export async function typeText(
   }
 }
 
+export async function setClipboard(text: string): Promise<void> {
+  // iOS simulators share clipboard with macOS via pbcopy
+  const escaped = text.replace(/'/g, "'\\''");
+  await exec(`echo '${escaped}' | pbcopy`);
+}
+
 const IOS_LOG_LEVEL_MAP: Record<string, string> = {
   verbose: "debug",
   debug: "debug",

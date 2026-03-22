@@ -150,6 +150,24 @@ export async function pressKey(
   await exec(adb(id, `shell input keyevent ${code}`));
 }
 
+export async function setClipboard(
+  deviceId: string,
+  text: string,
+): Promise<void> {
+  // Escape for shell: replace single quotes and other special chars
+  const escaped = text
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\$/g, "\\$")
+    .replace(/`/g, "\\`");
+  try {
+    await exec(adb(deviceId, `shell cmd clipboard set-text "${escaped}"`));
+  } catch {
+    // Fallback for API < 29
+    await exec(adb(deviceId, `shell am broadcast -a clipper.set -e text "${escaped}"`));
+  }
+}
+
 const LOG_LEVEL_MAP: Record<string, string> = {
   verbose: "V",
   debug: "D",

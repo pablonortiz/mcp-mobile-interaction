@@ -25,6 +25,7 @@ import { registerFindElementTool } from "./tools/find-element.js";
 import { registerKillAppTool } from "./tools/kill-app.js";
 import { registerClearAppDataTool } from "./tools/clear-app-data.js";
 import { registerGetDeviceLogsTool } from "./tools/get-device-logs.js";
+import { registerSetClipboardTool } from "./tools/set-clipboard.js";
 
 const server = new McpServer({
   name: "mcp-mobile-interaction",
@@ -53,6 +54,7 @@ registerFindElementTool(server);
 registerKillAppTool(server);
 registerClearAppDataTool(server);
 registerGetDeviceLogsTool(server);
+registerSetClipboardTool(server);
 
 async function main() {
   const transport = new StdioServerTransport();

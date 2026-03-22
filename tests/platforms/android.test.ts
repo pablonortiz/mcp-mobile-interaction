@@ -302,6 +302,37 @@ describe("pressKey", () => {
 });
 
 // ---------------------------------------------------------------------------
+// setClipboard
+// ---------------------------------------------------------------------------
+describe("setClipboard", () => {
+  it("uses cmd clipboard set-text command", async () => {
+    mockExec.mockResolvedValueOnce("");
+    await androidMod.setClipboard("dev1", "hello world");
+    expect(mockExec).toHaveBeenCalledWith(
+      'adb -s dev1 shell cmd clipboard set-text "hello world"'
+    );
+  });
+
+  it("escapes special characters in text", async () => {
+    mockExec.mockResolvedValueOnce("");
+    await androidMod.setClipboard("dev1", 'test"$`value');
+    const cmd = mockExec.mock.calls[0][0] as string;
+    expect(cmd).toContain('\\"');
+    expect(cmd).toContain("\\$");
+    expect(cmd).toContain("\\`");
+  });
+
+  it("falls back to am broadcast when cmd clipboard fails", async () => {
+    mockExec.mockRejectedValueOnce(new Error("cmd not found"));
+    mockExec.mockResolvedValueOnce("");
+    await androidMod.setClipboard("dev1", "fallback text");
+    const fallbackCall = mockExec.mock.calls[1][0] as string;
+    expect(fallbackCall).toContain("am broadcast -a clipper.set");
+    expect(fallbackCall).toContain("fallback text");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // getLogs / clearLogs
 // ---------------------------------------------------------------------------
 describe("getLogs", () => {
