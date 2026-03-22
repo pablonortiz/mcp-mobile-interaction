@@ -21,6 +21,7 @@ import { registerWaitForElementGoneTool } from "./tools/wait-for-element-gone.js
 import { registerTapElementTool } from "./tools/tap-element.js";
 import { registerGetScreenStateTool } from "./tools/get-screen-state.js";
 import { registerSetNetworkStateTool } from "./tools/set-network-state.js";
+import { registerFindElementTool } from "./tools/find-element.js";
 
 const server = new McpServer({
   name: "mcp-mobile-interaction",
@@ -45,6 +46,7 @@ registerWaitForElementGoneTool(server);
 registerTapElementTool(server);
 registerGetScreenStateTool(server);
 registerSetNetworkStateTool(server);
+registerFindElementTool(server);
 
 async function main() {
   const transport = new StdioServerTransport();
