@@ -29,7 +29,7 @@ import { registerSetClipboardTool } from "./tools/set-clipboard.js";
 
 const server = new McpServer({
   name: "mcp-mobile-interaction",
-  version: "1.3.0",
+  version: "1.3.1",
 });
 
 registerListDevicesTool(server);
