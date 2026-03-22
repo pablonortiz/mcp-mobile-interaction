@@ -226,6 +226,41 @@ export async function typeText(
   }
 }
 
+export async function clearAppData(
+  deviceId: string,
+  bundleId: string,
+): Promise<void> {
+  const isSim = await isSimulator(deviceId);
+
+  if (isSim) {
+    await exec(`xcrun simctl uninstall ${deviceId} ${bundleId}`);
+  } else {
+    throw new Error(
+      "Clearing app data on physical iOS devices is not possible via CLI. Use the device's Settings app instead.",
+    );
+  }
+}
+
+export async function clearAppCache(
+  deviceId: string,
+  bundleId: string,
+): Promise<void> {
+  const isSim = await isSimulator(deviceId);
+
+  if (!isSim) {
+    throw new Error(
+      "Clearing app cache on physical iOS devices is not possible via CLI. Use the device's Settings app instead.",
+    );
+  }
+
+  const containerPath = (await exec(
+    `xcrun simctl get_app_container ${deviceId} ${bundleId} data`,
+  )).trim();
+
+  await exec(`rm -rf "${containerPath}/Library/Caches"/*`);
+  await exec(`rm -rf "${containerPath}/tmp"/*`);
+}
+
 export async function killApp(
   deviceId: string,
   bundleId: string,

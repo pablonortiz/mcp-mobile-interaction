@@ -23,6 +23,7 @@ import { registerGetScreenStateTool } from "./tools/get-screen-state.js";
 import { registerSetNetworkStateTool } from "./tools/set-network-state.js";
 import { registerFindElementTool } from "./tools/find-element.js";
 import { registerKillAppTool } from "./tools/kill-app.js";
+import { registerClearAppDataTool } from "./tools/clear-app-data.js";
 
 const server = new McpServer({
   name: "mcp-mobile-interaction",
@@ -49,6 +50,7 @@ registerGetScreenStateTool(server);
 registerSetNetworkStateTool(server);
 registerFindElementTool(server);
 registerKillAppTool(server);
+registerClearAppDataTool(server);
 
 async function main() {
   const transport = new StdioServerTransport();

@@ -150,6 +150,32 @@ export async function pressKey(
   await exec(adb(id, `shell input keyevent ${code}`));
 }
 
+export async function clearAppData(
+  deviceId: string,
+  packageName: string,
+): Promise<void> {
+  await exec(adb(deviceId, `shell pm clear ${packageName}`));
+}
+
+export async function clearAppCache(
+  deviceId: string,
+  packageName: string,
+): Promise<void> {
+  try {
+    await exec(adb(deviceId, `shell run-as ${packageName} rm -rf cache/`));
+    await exec(adb(deviceId, `shell run-as ${packageName} rm -rf code_cache/`));
+  } catch {
+    // Fallback: try pm clear --cache-only (API 30+)
+    try {
+      await exec(adb(deviceId, `shell pm clear --cache-only ${packageName}`));
+    } catch {
+      throw new Error(
+        `Cannot clear cache for ${packageName}. The app may not be debuggable. Use mode: "all" to clear all data instead.`,
+      );
+    }
+  }
+}
+
 export async function killApp(
   deviceId: string,
   packageName: string,

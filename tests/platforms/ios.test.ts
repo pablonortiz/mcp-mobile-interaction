@@ -212,6 +212,40 @@ describe("getUiTree", () => {
 });
 
 // ---------------------------------------------------------------------------
+// clearAppData — command construction
+// ---------------------------------------------------------------------------
+describe("clearAppData", () => {
+  it("uses xcrun simctl uninstall for simulators", async () => {
+    // isSimulator check
+    mockExec.mockResolvedValueOnce(
+      JSON.stringify({
+        devices: {
+          "com.apple.CoreSimulator.SimRuntime.iOS-17": [
+            { udid: "sim-1", name: "iPhone", state: "Booted" },
+          ],
+        },
+      })
+    );
+    mockExec.mockResolvedValueOnce(""); // uninstall command
+    await iosMod.clearAppData("sim-1", "com.example.app");
+    const uninstallCall = mockExec.mock.calls[1][0] as string;
+    expect(uninstallCall).toBe(
+      "xcrun simctl uninstall sim-1 com.example.app"
+    );
+  });
+
+  it("throws for physical devices", async () => {
+    // isSimulator: no match
+    mockExec.mockResolvedValueOnce(
+      JSON.stringify({ devices: {} })
+    );
+    await expect(iosMod.clearAppData("physical-1", "com.example.app")).rejects.toThrow(
+      /not possible via CLI/
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // killApp — command construction
 // ---------------------------------------------------------------------------
 describe("killApp", () => {

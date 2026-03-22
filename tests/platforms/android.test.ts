@@ -302,6 +302,50 @@ describe("pressKey", () => {
 });
 
 // ---------------------------------------------------------------------------
+// clearAppData / clearAppCache
+// ---------------------------------------------------------------------------
+describe("clearAppData", () => {
+  it("sends pm clear command", async () => {
+    mockExec.mockResolvedValueOnce("");
+    await androidMod.clearAppData("dev1", "com.example.app");
+    expect(mockExec).toHaveBeenCalledWith(
+      "adb -s dev1 shell pm clear com.example.app"
+    );
+  });
+});
+
+describe("clearAppCache", () => {
+  it("uses run-as to delete cache dirs", async () => {
+    mockExec.mockResolvedValueOnce(""); // rm cache/
+    mockExec.mockResolvedValueOnce(""); // rm code_cache/
+    await androidMod.clearAppCache("dev1", "com.example.app");
+    expect(mockExec).toHaveBeenCalledWith(
+      "adb -s dev1 shell run-as com.example.app rm -rf cache/"
+    );
+    expect(mockExec).toHaveBeenCalledWith(
+      "adb -s dev1 shell run-as com.example.app rm -rf code_cache/"
+    );
+  });
+
+  it("falls back to pm clear --cache-only when run-as fails", async () => {
+    mockExec.mockRejectedValueOnce(new Error("run-as failed")); // rm cache/ fails
+    mockExec.mockResolvedValueOnce(""); // pm clear --cache-only
+    await androidMod.clearAppCache("dev1", "com.example.app");
+    expect(mockExec).toHaveBeenCalledWith(
+      "adb -s dev1 shell pm clear --cache-only com.example.app"
+    );
+  });
+
+  it("throws descriptive error when both methods fail", async () => {
+    mockExec.mockRejectedValueOnce(new Error("run-as failed"));
+    mockExec.mockRejectedValueOnce(new Error("pm clear failed"));
+    await expect(
+      androidMod.clearAppCache("dev1", "com.example.app")
+    ).rejects.toThrow(/Cannot clear cache/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // killApp
 // ---------------------------------------------------------------------------
 describe("killApp", () => {

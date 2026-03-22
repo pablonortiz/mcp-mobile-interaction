@@ -90,6 +90,7 @@ All tools accept a `platform` parameter (`"android"` or `"ios"`) and an optional
 | `set_network_state` | Control device network connectivity: Wi-Fi, mobile data, airplane mode (Android only) |
 | `find_element` | Find UI elements by text, resource_id, or type without tapping. Returns element details for assertions. Supports `scroll_to_find` |
 | `kill_app` | Force-stop an application by package name (Android) or bundle ID (iOS) |
+| `clear_app_data` | Clear app data. Mode `cache` clears temp files only; mode `all` resets to fresh install state |
 
 ### Waiting Tools
 
