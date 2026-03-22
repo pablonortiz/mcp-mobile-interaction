@@ -150,6 +150,13 @@ export async function pressKey(
   await exec(adb(id, `shell input keyevent ${code}`));
 }
 
+export async function killApp(
+  deviceId: string,
+  packageName: string,
+): Promise<void> {
+  await exec(adb(deviceId, `shell am force-stop ${packageName}`));
+}
+
 export async function setWifi(
   deviceId: string,
   enabled: boolean,

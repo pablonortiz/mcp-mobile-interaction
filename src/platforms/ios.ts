@@ -226,6 +226,20 @@ export async function typeText(
   }
 }
 
+export async function killApp(
+  deviceId: string,
+  bundleId: string,
+): Promise<void> {
+  const isSim = await isSimulator(deviceId);
+
+  if (isSim) {
+    await exec(`xcrun simctl terminate ${deviceId} ${bundleId}`);
+  } else {
+    await requireIdb();
+    await exec(`idb terminate --udid ${deviceId} ${bundleId}`);
+  }
+}
+
 const IOS_KEY_MAP: Record<string, { idb: string; simctl?: string }> = {
   home: { idb: "1", simctl: undefined }, // Home button handled differently
   back: { idb: "back", simctl: undefined },

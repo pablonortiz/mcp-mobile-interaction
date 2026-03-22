@@ -212,6 +212,30 @@ describe("getUiTree", () => {
 });
 
 // ---------------------------------------------------------------------------
+// killApp — command construction
+// ---------------------------------------------------------------------------
+describe("killApp", () => {
+  it("uses xcrun simctl terminate for simulators", async () => {
+    // isSimulator check
+    mockExec.mockResolvedValueOnce(
+      JSON.stringify({
+        devices: {
+          "com.apple.CoreSimulator.SimRuntime.iOS-17": [
+            { udid: "sim-1", name: "iPhone", state: "Booted" },
+          ],
+        },
+      })
+    );
+    mockExec.mockResolvedValueOnce(""); // terminate command
+    await iosMod.killApp("sim-1", "com.apple.mobilesafari");
+    const terminateCall = mockExec.mock.calls[1][0] as string;
+    expect(terminateCall).toBe(
+      "xcrun simctl terminate sim-1 com.apple.mobilesafari"
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // pressKey — key mapping
 // ---------------------------------------------------------------------------
 describe("pressKey", () => {

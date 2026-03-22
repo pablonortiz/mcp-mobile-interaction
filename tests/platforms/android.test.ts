@@ -302,6 +302,19 @@ describe("pressKey", () => {
 });
 
 // ---------------------------------------------------------------------------
+// killApp
+// ---------------------------------------------------------------------------
+describe("killApp", () => {
+  it("sends am force-stop command", async () => {
+    mockExec.mockResolvedValueOnce("");
+    await androidMod.killApp("dev1", "com.example.app");
+    expect(mockExec).toHaveBeenCalledWith(
+      "adb -s dev1 shell am force-stop com.example.app"
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // setWifi / setMobileData / setAirplaneMode
 // ---------------------------------------------------------------------------
 describe("setWifi", () => {
