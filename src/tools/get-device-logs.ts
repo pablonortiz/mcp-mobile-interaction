@@ -43,14 +43,20 @@ export function registerGetDeviceLogsTool(server: McpServer) {
           ? await android.getFirstDeviceId()
           : await ios.getFirstDeviceId());
 
+      let clearWarning: string | undefined;
+
       if (clear) {
         if (platform === "android") {
-          await android.clearLogs(deviceId);
+          try {
+            await android.clearLogs(deviceId);
+          } catch {
+            clearWarning = "Warning: Failed to clear log buffer (this can happen on some emulators due to permission restrictions). Continuing with log read.";
+          }
         } else {
           // iOS doesn't support clearing logs programmatically
         }
 
-        if (!tag && !search) {
+        if (!tag && !search && !clearWarning) {
           return {
             content: [{
               type: "text" as const,
@@ -88,11 +94,12 @@ export function registerGetDeviceLogsTool(server: McpServer) {
 
       const tagInfo = tag ? `, tag: ${tag}` : "";
       const levelInfo = level ? `, level: ${level}+` : "";
+      const warningLine = clearWarning ? `\n${clearWarning}\n` : "";
 
       return {
         content: [{
           type: "text" as const,
-          text: `Device logs (${platform}, last ${lines} lines${tagInfo}${levelInfo}):\n\n${logOutput}`,
+          text: `${warningLine}Device logs (${platform}, last ${lines} lines${tagInfo}${levelInfo}):\n\n${logOutput}`,
         }],
       };
     },
