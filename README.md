@@ -87,6 +87,7 @@ All tools accept a `platform` parameter (`"android"` or `"ios"`) and an optional
 | `launch_app` | Launch an app by package name / bundle ID |
 | `open_url` | Open a URL or deep link |
 | `tap_element` | Find element by text, resource_id, or type and tap it. Supports `scroll_to_find` and `wait_for` |
+| `set_network_state` | Control device network connectivity: Wi-Fi, mobile data, airplane mode (Android only) |
 
 ### Waiting Tools
 

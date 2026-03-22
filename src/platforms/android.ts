@@ -150,6 +150,33 @@ export async function pressKey(
   await exec(adb(id, `shell input keyevent ${code}`));
 }
 
+export async function setWifi(
+  deviceId: string,
+  enabled: boolean,
+): Promise<void> {
+  await exec(adb(deviceId, `shell svc wifi ${enabled ? "enable" : "disable"}`));
+}
+
+export async function setMobileData(
+  deviceId: string,
+  enabled: boolean,
+): Promise<void> {
+  await exec(adb(deviceId, `shell svc data ${enabled ? "enable" : "disable"}`));
+}
+
+export async function setAirplaneMode(
+  deviceId: string,
+  enabled: boolean,
+): Promise<void> {
+  try {
+    await exec(adb(deviceId, `shell cmd connectivity airplane-mode ${enabled ? "enable" : "disable"}`));
+  } catch {
+    // Fallback for API < 29
+    await exec(adb(deviceId, `shell settings put global airplane_mode_on ${enabled ? "1" : "0"}`));
+    await exec(adb(deviceId, `shell am broadcast -a android.intent.action.AIRPLANE_MODE --ez state ${enabled}`));
+  }
+}
+
 export async function getUiTree(deviceId?: string): Promise<UiElement[]> {
   const id = await resolveDevice(deviceId);
 

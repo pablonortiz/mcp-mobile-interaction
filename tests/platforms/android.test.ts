@@ -302,6 +302,68 @@ describe("pressKey", () => {
 });
 
 // ---------------------------------------------------------------------------
+// setWifi / setMobileData / setAirplaneMode
+// ---------------------------------------------------------------------------
+describe("setWifi", () => {
+  it("sends svc wifi enable command", async () => {
+    mockExec.mockResolvedValueOnce("");
+    await androidMod.setWifi("dev1", true);
+    expect(mockExec).toHaveBeenCalledWith(
+      "adb -s dev1 shell svc wifi enable"
+    );
+  });
+
+  it("sends svc wifi disable command", async () => {
+    mockExec.mockResolvedValueOnce("");
+    await androidMod.setWifi("dev1", false);
+    expect(mockExec).toHaveBeenCalledWith(
+      "adb -s dev1 shell svc wifi disable"
+    );
+  });
+});
+
+describe("setMobileData", () => {
+  it("sends svc data enable command", async () => {
+    mockExec.mockResolvedValueOnce("");
+    await androidMod.setMobileData("dev1", true);
+    expect(mockExec).toHaveBeenCalledWith(
+      "adb -s dev1 shell svc data enable"
+    );
+  });
+
+  it("sends svc data disable command", async () => {
+    mockExec.mockResolvedValueOnce("");
+    await androidMod.setMobileData("dev1", false);
+    expect(mockExec).toHaveBeenCalledWith(
+      "adb -s dev1 shell svc data disable"
+    );
+  });
+});
+
+describe("setAirplaneMode", () => {
+  it("uses cmd connectivity airplane-mode enable", async () => {
+    mockExec.mockResolvedValueOnce("");
+    await androidMod.setAirplaneMode("dev1", true);
+    expect(mockExec).toHaveBeenCalledWith(
+      "adb -s dev1 shell cmd connectivity airplane-mode enable"
+    );
+  });
+
+  it("falls back to settings + broadcast when cmd fails", async () => {
+    mockExec.mockRejectedValueOnce(new Error("cmd not found"));
+    mockExec.mockResolvedValueOnce(""); // settings put
+    mockExec.mockResolvedValueOnce(""); // am broadcast
+    await androidMod.setAirplaneMode("dev1", true);
+    expect(mockExec).toHaveBeenCalledWith(
+      "adb -s dev1 shell settings put global airplane_mode_on 1"
+    );
+    expect(mockExec).toHaveBeenCalledWith(
+      "adb -s dev1 shell am broadcast -a android.intent.action.AIRPLANE_MODE --ez state true"
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // screenshot — command construction
 // ---------------------------------------------------------------------------
 describe("screenshot", () => {
