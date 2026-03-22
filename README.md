@@ -83,7 +83,7 @@ All tools accept a `platform` parameter (`"android"` or `"ios"`) and an optional
 | `long_press` | Long-press at (x, y) with configurable duration |
 | `swipe` | Swipe between coordinates or by direction (up/down/left/right) |
 | `type_text` | Type text into the focused input field |
-| `press_key` | Press a key (home, back, enter, delete, volume_up, volume_down, power, tab, recent_apps) |
+| `press_key` | Press a key (home, back, enter, delete, volume_up, volume_down, power, tab, recent_apps, menu, escape, search, camera, media_play_pause) or send a raw Android keycode |
 | `launch_app` | Launch an app by package name / bundle ID |
 | `open_url` | Open a URL or deep link |
 | `tap_element` | Find element by text, resource_id, or type and tap it. Supports `scroll_to_find` and `wait_for` |

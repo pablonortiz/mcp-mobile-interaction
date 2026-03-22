@@ -220,6 +220,12 @@ describe("pressKey", () => {
       /Unknown key: nonexistent/
     );
   });
+
+  it("throws when numeric keycode is used without a named key on iOS", async () => {
+    await expect(iosMod.pressKey(undefined, "sim-1", 120)).rejects.toThrow(
+      /Numeric keycode is not supported on iOS/
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

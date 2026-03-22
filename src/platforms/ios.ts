@@ -236,14 +236,28 @@ const IOS_KEY_MAP: Record<string, { idb: string; simctl?: string }> = {
   power: { idb: "power" },
   tab: { idb: "43", simctl: "tab" },
   recent_apps: { idb: "recent_apps" },
+  menu: { idb: "82" },
+  escape: { idb: "53", simctl: "escape" },
+  search: { idb: "84" },
+  camera: { idb: "camera" },
+  media_play_pause: { idb: "media_play_pause" },
 };
 
 export async function pressKey(
-  key: string,
+  key?: string,
   deviceId?: string,
+  keycode?: number,
 ): Promise<void> {
   const id = await resolveDevice(deviceId);
-  const mapping = IOS_KEY_MAP[key];
+
+  // Numeric keycode: not supported on iOS, ignore with warning
+  if (keycode !== undefined && !key) {
+    throw new Error(
+      "Numeric keycode is not supported on iOS. Use a named key instead.",
+    );
+  }
+
+  const mapping = key ? IOS_KEY_MAP[key] : undefined;
 
   if (!mapping) {
     throw new Error(

@@ -238,6 +238,62 @@ describe("pressKey", () => {
     );
   });
 
+  it("maps 'menu' to keyevent 82", async () => {
+    mockExec.mockResolvedValueOnce("");
+    await androidMod.pressKey("menu", "dev1");
+    expect(mockExec).toHaveBeenCalledWith(
+      "adb -s dev1 shell input keyevent 82"
+    );
+  });
+
+  it("maps 'escape' to keyevent 111", async () => {
+    mockExec.mockResolvedValueOnce("");
+    await androidMod.pressKey("escape", "dev1");
+    expect(mockExec).toHaveBeenCalledWith(
+      "adb -s dev1 shell input keyevent 111"
+    );
+  });
+
+  it("maps 'search' to keyevent 84", async () => {
+    mockExec.mockResolvedValueOnce("");
+    await androidMod.pressKey("search", "dev1");
+    expect(mockExec).toHaveBeenCalledWith(
+      "adb -s dev1 shell input keyevent 84"
+    );
+  });
+
+  it("maps 'camera' to keyevent 27", async () => {
+    mockExec.mockResolvedValueOnce("");
+    await androidMod.pressKey("camera", "dev1");
+    expect(mockExec).toHaveBeenCalledWith(
+      "adb -s dev1 shell input keyevent 27"
+    );
+  });
+
+  it("maps 'media_play_pause' to keyevent 85", async () => {
+    mockExec.mockResolvedValueOnce("");
+    await androidMod.pressKey("media_play_pause", "dev1");
+    expect(mockExec).toHaveBeenCalledWith(
+      "adb -s dev1 shell input keyevent 85"
+    );
+  });
+
+  it("uses numeric keycode directly when provided", async () => {
+    mockExec.mockResolvedValueOnce("");
+    await androidMod.pressKey(undefined, "dev1", 120);
+    expect(mockExec).toHaveBeenCalledWith(
+      "adb -s dev1 shell input keyevent 120"
+    );
+  });
+
+  it("keycode takes priority over named key", async () => {
+    mockExec.mockResolvedValueOnce("");
+    await androidMod.pressKey("home", "dev1", 120);
+    expect(mockExec).toHaveBeenCalledWith(
+      "adb -s dev1 shell input keyevent 120"
+    );
+  });
+
   it("throws for unknown keys", async () => {
     await expect(androidMod.pressKey("unknown_key", "dev1")).rejects.toThrow(
       /Unknown key: unknown_key/

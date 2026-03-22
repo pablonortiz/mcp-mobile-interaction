@@ -128,20 +128,26 @@ const KEYCODE_MAP: Record<string, number> = {
   power: 26,
   tab: 61,
   recent_apps: 187,
+  menu: 82,
+  escape: 111,
+  search: 84,
+  camera: 27,
+  media_play_pause: 85,
 };
 
 export async function pressKey(
-  key: string,
+  key?: string,
   deviceId?: string,
+  keycode?: number,
 ): Promise<void> {
   const id = await resolveDevice(deviceId);
-  const keycode = KEYCODE_MAP[key];
-  if (keycode === undefined) {
+  const code = keycode ?? (key ? KEYCODE_MAP[key] : undefined);
+  if (code === undefined) {
     throw new Error(
       `Unknown key: ${key}. Supported keys: ${Object.keys(KEYCODE_MAP).join(", ")}`,
     );
   }
-  await exec(adb(id, `shell input keyevent ${keycode}`));
+  await exec(adb(id, `shell input keyevent ${code}`));
 }
 
 export async function getUiTree(deviceId?: string): Promise<UiElement[]> {
