@@ -1,12 +1,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import * as android from "../platforms/android.js";
-import * as ios from "../platforms/ios.js";
+import { getDriver } from "../platforms/driver.js";
+import { formatUiTree } from "../utils/format-ui.js";
+import { READ_ONLY } from "../utils/annotations.js";
 
 export function registerGetUiTreeTool(server: McpServer) {
   server.tool(
     "get_ui_tree",
-    "Get a simplified flat list of UI elements on the current screen. Each element includes type, text, bounds, center coordinates (for tapping), and whether it is clickable. Supports optional filters to reduce noise.",
+    "Get a simplified flat list of UI elements on the current screen. Each element includes type, text, center coordinates (for tapping), size and state flags. Supports optional filters to reduce noise.",
     {
       platform: z.enum(["android", "ios"]).describe("Target platform"),
       device_id: z
@@ -29,12 +30,17 @@ export function registerGetUiTreeTool(server: McpServer) {
         .string()
         .optional()
         .describe("Only return elements whose resource_id contains this substring (case-insensitive)"),
+      max_elements: z
+        .number()
+        .int()
+        .min(1)
+        .max(500)
+        .optional()
+        .describe("Maximum elements to return; the rest is summarized. Default: 120"),
     },
-    async ({ platform, device_id, only_clickable, only_with_text, type_filter, resource_id_contains }) => {
-      let elements =
-        platform === "android"
-          ? await android.getUiTree(device_id)
-          : await ios.getUiTree(device_id);
+    READ_ONLY,
+    async ({ platform, device_id, only_clickable, only_with_text, type_filter, resource_id_contains, max_elements }) => {
+      let elements = await getDriver(platform).getUiTree(device_id);
 
       const totalCount = elements.length;
 
@@ -58,15 +64,15 @@ export function registerGetUiTreeTool(server: McpServer) {
       }
 
       const hasFilters = only_clickable || only_with_text || type_filter || resource_id_contains;
-      const header = hasFilters
-        ? `${elements.length} elements (filtered from ${totalCount} total):`
-        : `${elements.length} elements:`;
+      const label = hasFilters
+        ? `UI elements (filtered from ${totalCount} total)`
+        : "UI elements";
 
       return {
         content: [
           {
             type: "text" as const,
-            text: `${header}\n${JSON.stringify(elements, null, 2)}`,
+            text: formatUiTree(elements, label, max_elements),
           },
         ],
       };

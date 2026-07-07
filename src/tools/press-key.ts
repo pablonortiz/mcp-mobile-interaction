@@ -1,10 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import * as android from "../platforms/android.js";
-import * as ios from "../platforms/ios.js";
+import { getDriver } from "../platforms/driver.js";
 import type { UiElement } from "../types.js";
 import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
+import { ACTION } from "../utils/annotations.js";
 
 function hashTree(tree: UiElement[]): string {
   return tree
@@ -15,7 +15,7 @@ function hashTree(tree: UiElement[]): string {
 export function registerPressKeyTool(server: McpServer) {
   server.tool(
     "press_key",
-    "Press a hardware or navigation key on the device (home, back, enter, delete, volume_up, volume_down, power, tab, recent_apps, menu, escape, search, camera, media_play_pause) or send a raw Android keycode",
+    "Press a hardware or navigation key on the device (home, back, enter, delete, paste, volume_up, volume_down, power, tab, recent_apps, menu, escape, search, camera, media_play_pause) or send a raw Android keycode. Supports repeat for multiple presses in one call.",
     {
       platform: z.enum(["android", "ios"]).describe("Target platform"),
       device_id: z
@@ -28,6 +28,7 @@ export function registerPressKeyTool(server: McpServer) {
           "back",
           "enter",
           "delete",
+          "paste",
           "volume_up",
           "volume_down",
           "power",
@@ -48,12 +49,17 @@ export function registerPressKeyTool(server: McpServer) {
         .max(999)
         .optional()
         .describe("Android keycode number (0-999). Use for keys not in the named list. See https://developer.android.com/reference/android/view/KeyEvent. Ignored on iOS."),
+      repeat: z
+        .number()
+        .int()
+        .min(1)
+        .max(50)
+        .optional()
+        .describe("Press the key this many times (e.g. delete x10). Default: 1"),
       observe: z
         .enum(["none", "ui_tree", "screenshot", "both"])
         .optional()
-        .describe(
-          "Capture screen state after action. Default: none",
-        ),
+        .describe("Capture screen state after action. Default: none"),
       observe_delay_ms: z
         .number()
         .int()
@@ -62,41 +68,30 @@ export function registerPressKeyTool(server: McpServer) {
       observe_stabilize: z
         .boolean()
         .optional()
-        .describe(
-          "If true, wait for UI to stabilize instead of fixed delay. Default: false",
-        ),
+        .describe("If true, wait for UI to stabilize instead of fixed delay. Default: false"),
     },
-    async ({ platform, device_id, key, keycode, observe, observe_delay_ms, observe_stabilize }) => {
+    ACTION,
+    async ({ platform, device_id, key, keycode, repeat, observe, observe_delay_ms, observe_stabilize }) => {
       if (!key && keycode === undefined) {
         return {
           content: [{ type: "text" as const, text: "Error: Provide at least one of key or keycode." }],
           isError: true,
         };
       }
+
+      const driver = getDriver(platform);
+
       // For back key: snapshot UI before to detect if screen changed
       let beforeHash: string | undefined;
       if (key === "back") {
         try {
-          const tree = platform === "android"
-            ? await android.getUiTree(device_id)
-            : await ios.getUiTree(device_id);
-          beforeHash = hashTree(tree);
+          beforeHash = hashTree(await driver.getUiTree(device_id));
         } catch {
           // Best-effort
         }
       }
 
-      if (platform === "android") {
-        await android.pressKey(key, device_id, keycode);
-      } else {
-        if (keycode !== undefined && !key) {
-          return {
-            content: [{ type: "text" as const, text: "Warning: Numeric keycode is not supported on iOS. Use a named key instead." }],
-            isError: true,
-          };
-        }
-        await ios.pressKey(key, device_id);
-      }
+      await driver.pressKey(key, device_id, keycode, repeat ?? 1);
 
       const observation = await performObservation({
         mode: observe ?? "none",
@@ -107,19 +102,17 @@ export function registerPressKeyTool(server: McpServer) {
       });
 
       const keyLabel = key ?? `keycode(${keycode})`;
-      let confirmText = `Pressed "${keyLabel}" on ${platform} device`;
+      const repeatLabel = repeat && repeat > 1 ? ` x${repeat}` : "";
+      let confirmText = `Pressed "${keyLabel}"${repeatLabel} on ${platform} device`;
 
       // For back: detect if screen unchanged and add hint
       if (key === "back" && beforeHash !== undefined) {
         try {
-          // Ensure enough time has passed for back to take effect
           if (!observe || observe === "none") {
             await new Promise((resolve) => setTimeout(resolve, 500));
           }
 
-          const afterTree = platform === "android"
-            ? await android.getUiTree(device_id)
-            : await ios.getUiTree(device_id);
+          const afterTree = await driver.getUiTree(device_id);
           const afterHash = hashTree(afterTree);
 
           if (beforeHash === afterHash) {

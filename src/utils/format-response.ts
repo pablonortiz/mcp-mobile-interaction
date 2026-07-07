@@ -1,8 +1,16 @@
 import type { UiElement } from "../types.js";
+import { formatUiTree } from "./format-ui.js";
 
 export interface ObservationResult {
   uiTree?: UiElement[];
-  screenshot?: { base64: string; width: number; height: number; nativeWidth: number; nativeHeight: number; scale: number };
+  screenshot?: {
+    base64: string;
+    width: number;
+    height: number;
+    nativeWidth: number;
+    nativeHeight: number;
+    scale: number;
+  };
 }
 
 type ContentItem =
@@ -26,7 +34,7 @@ export function buildResponseContent(
   if (observation.uiTree) {
     content.push({
       type: "text" as const,
-      text: `--- UI Tree (${observation.uiTree.length} elements) ---\n${JSON.stringify(observation.uiTree, null, 2)}`,
+      text: formatUiTree(observation.uiTree, "UI tree"),
     });
   }
 

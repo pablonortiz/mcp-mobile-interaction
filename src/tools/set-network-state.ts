@@ -1,14 +1,15 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as android from "../platforms/android.js";
-import * as ios from "../platforms/ios.js";
+import { getDriver } from "../platforms/driver.js";
 import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
+import { ACTION } from "../utils/annotations.js";
 
 export function registerSetNetworkStateTool(server: McpServer) {
   server.tool(
     "set_network_state",
-    "Control device network connectivity (Wi-Fi, mobile data, airplane mode)",
+    "Control device network connectivity: Wi-Fi, mobile data, airplane mode, and emulator network throttling (latency/speed). Android only.",
     {
       platform: z.enum(["android", "ios"]).describe("Target platform"),
       device_id: z
@@ -27,26 +28,33 @@ export function registerSetNetworkStateTool(server: McpServer) {
         .boolean()
         .optional()
         .describe("Enable or disable airplane mode"),
+      delay: z
+        .enum(["none", "gprs", "edge", "umts"])
+        .optional()
+        .describe("Simulate network latency (Android emulator only). 'none' removes the delay."),
+      speed: z
+        .enum(["full", "gsm", "gprs", "edge", "umts", "hsdpa", "lte", "evdo"])
+        .optional()
+        .describe("Throttle network speed (Android emulator only). 'full' removes the throttle."),
       observe: z
         .enum(["none", "screenshot"])
         .optional()
         .describe("Capture screenshot after action. Default: none"),
     },
-    async ({ platform, device_id, wifi, mobile_data, airplane_mode, observe }) => {
-      if (wifi === undefined && mobile_data === undefined && airplane_mode === undefined) {
+    ACTION,
+    async ({ platform, device_id, wifi, mobile_data, airplane_mode, delay, speed, observe }) => {
+      if (
+        wifi === undefined &&
+        mobile_data === undefined &&
+        airplane_mode === undefined &&
+        delay === undefined &&
+        speed === undefined
+      ) {
         return {
-          content: [{ type: "text" as const, text: "Error: Provide at least one of wifi, mobile_data, or airplane_mode." }],
+          content: [{ type: "text" as const, text: "Error: Provide at least one of wifi, mobile_data, airplane_mode, delay, or speed." }],
           isError: true,
         };
       }
-
-      const deviceId = device_id ??
-        (platform === "android"
-          ? await android.getFirstDeviceId()
-          : await ios.getFirstDeviceId());
-
-      const warnings: string[] = [];
-      const changes: string[] = [];
 
       if (platform === "ios") {
         return {
@@ -57,6 +65,11 @@ export function registerSetNetworkStateTool(server: McpServer) {
           isError: true,
         };
       }
+
+      const deviceId = device_id ?? (await getDriver(platform).getFirstDeviceId());
+
+      const warnings: string[] = [];
+      const changes: string[] = [];
 
       // If airplane_mode is enabled, apply it first and ignore wifi/mobile_data
       if (airplane_mode !== undefined) {
@@ -78,6 +91,12 @@ export function registerSetNetworkStateTool(server: McpServer) {
           await android.setMobileData(deviceId, mobile_data);
           changes.push(`Mobile data: ${mobile_data ? "enabled" : "disabled"}`);
         }
+      }
+
+      if (delay !== undefined || speed !== undefined) {
+        await android.setNetworkThrottle(deviceId, { delay, speed });
+        if (delay !== undefined) changes.push(`Network delay: ${delay}`);
+        if (speed !== undefined) changes.push(`Network speed: ${speed}`);
       }
 
       const observation = observe === "screenshot"

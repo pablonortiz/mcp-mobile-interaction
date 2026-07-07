@@ -1,13 +1,32 @@
-import { exec, execBuffer } from "../utils/exec.js";
-import type { Device, UiElement, ScreenInfo } from "../types.js";
+import { tmpdir } from "os";
+import { join } from "path";
+import type { ChildProcess } from "child_process";
+import { run, runBuffer, spawnProc, shellQuote } from "../utils/exec.js";
+import type {
+  AppInfo,
+  Device,
+  ForegroundApp,
+  LogOptions,
+  ScreenInfo,
+  TypeTextMethod,
+  UiElement,
+} from "../types.js";
 import { annotateOverlays } from "../utils/overlay-detect.js";
+import { unescapeXml } from "../utils/xml.js";
 
-function adb(deviceId: string, cmd: string): string {
-  return `adb -s ${deviceId} ${cmd}`;
+const DEVICE_CACHE_TTL_MS = 10_000;
+let cachedFirstDevice: { id: string; timestamp: number } | undefined;
+
+export function resetCaches(): void {
+  cachedFirstDevice = undefined;
+}
+
+function adb(deviceId: string, args: string[], options?: { timeout?: number }) {
+  return run("adb", ["-s", deviceId, ...args], options);
 }
 
 export async function listDevices(): Promise<Device[]> {
-  const output = await exec("adb devices -l");
+  const output = await run("adb", ["devices", "-l"]);
   const lines = output.trim().split("\n").slice(1); // skip header
 
   const devices: Device[] = [];
@@ -19,7 +38,6 @@ export async function listDevices(): Promise<Device[]> {
     const id = parts[0];
     const status = parts[1];
 
-    // Extract model name from "model:XXX" token
     const modelToken = parts.find((p) => p.startsWith("model:"));
     const name = modelToken ? modelToken.split(":")[1] : id;
 
@@ -30,6 +48,13 @@ export async function listDevices(): Promise<Device[]> {
 }
 
 export async function getFirstDeviceId(): Promise<string> {
+  if (
+    cachedFirstDevice &&
+    Date.now() - cachedFirstDevice.timestamp < DEVICE_CACHE_TTL_MS
+  ) {
+    return cachedFirstDevice.id;
+  }
+
   const devices = await listDevices();
   const connected = devices.filter((d) => d.status === "device");
   if (connected.length === 0) {
@@ -37,6 +62,8 @@ export async function getFirstDeviceId(): Promise<string> {
       "No connected Android devices found. Make sure an emulator is running or a device is connected via USB with ADB debugging enabled.",
     );
   }
+
+  cachedFirstDevice = { id: connected[0].id, timestamp: Date.now() };
   return connected[0].id;
 }
 
@@ -46,7 +73,9 @@ async function resolveDevice(deviceId?: string): Promise<string> {
 
 export async function screenshot(deviceId?: string): Promise<Buffer> {
   const id = await resolveDevice(deviceId);
-  return execBuffer(adb(id, "exec-out screencap -p"), { timeout: 30_000 });
+  return runBuffer("adb", ["-s", id, "exec-out", "screencap", "-p"], {
+    timeout: 30_000,
+  });
 }
 
 export async function tap(
@@ -55,7 +84,7 @@ export async function tap(
   deviceId?: string,
 ): Promise<void> {
   const id = await resolveDevice(deviceId);
-  await exec(adb(id, `shell input tap ${x} ${y}`));
+  await adb(id, ["shell", "input", "tap", String(x), String(y)]);
 }
 
 export async function doubleTap(
@@ -64,10 +93,11 @@ export async function doubleTap(
   deviceId?: string,
 ): Promise<void> {
   const id = await resolveDevice(deviceId);
-  // Two rapid taps with minimal delay
-  await exec(
-    adb(id, `shell "input tap ${x} ${y} && sleep 0.05 && input tap ${x} ${y}"`),
-  );
+  // Single remote shell invocation keeps the two taps rapid enough
+  await adb(id, [
+    "shell",
+    `input tap ${x} ${y} && sleep 0.05 && input tap ${x} ${y}`,
+  ]);
 }
 
 export async function longPress(
@@ -78,7 +108,16 @@ export async function longPress(
 ): Promise<void> {
   const id = await resolveDevice(deviceId);
   // Swipe from point to same point = long press
-  await exec(adb(id, `shell input swipe ${x} ${y} ${x} ${y} ${durationMs}`));
+  await adb(id, [
+    "shell",
+    "input",
+    "swipe",
+    String(x),
+    String(y),
+    String(x),
+    String(y),
+    String(durationMs),
+  ]);
 }
 
 export async function swipe(
@@ -90,32 +129,38 @@ export async function swipe(
   deviceId?: string,
 ): Promise<void> {
   const id = await resolveDevice(deviceId);
-  await exec(
-    adb(id, `shell input swipe ${startX} ${startY} ${endX} ${endY} ${durationMs}`),
-  );
+  await adb(id, [
+    "shell",
+    "input",
+    "swipe",
+    String(startX),
+    String(startY),
+    String(endX),
+    String(endY),
+    String(durationMs),
+  ]);
 }
+
+const NON_ASCII = /[^\x20-\x7E]/;
+const KEYCODE_PASTE = 279;
 
 export async function typeText(
   text: string,
   deviceId?: string,
-): Promise<void> {
+): Promise<TypeTextMethod> {
   const id = await resolveDevice(deviceId);
-  // Escape special characters for ADB shell
-  const escaped = text
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/'/g, "\\'")
-    .replace(/ /g, "%s")
-    .replace(/&/g, "\\&")
-    .replace(/</g, "\\<")
-    .replace(/>/g, "\\>")
-    .replace(/\|/g, "\\|")
-    .replace(/;/g, "\\;")
-    .replace(/\(/g, "\\(")
-    .replace(/\)/g, "\\)")
-    .replace(/\$/g, "\\$")
-    .replace(/`/g, "\\`");
-  await exec(adb(id, `shell input text "${escaped}"`));
+
+  // `input text` silently drops non-ASCII characters (á, ñ, emoji, …),
+  // so those go through the clipboard + KEYCODE_PASTE instead.
+  if (NON_ASCII.test(text)) {
+    await setClipboard(id, text);
+    await adb(id, ["shell", "input", "keyevent", String(KEYCODE_PASTE)]);
+    return "clipboard_paste";
+  }
+
+  const escaped = text.replace(/ /g, "%s");
+  await adb(id, ["shell", "input", "text", shellQuote(escaped)]);
+  return "keyboard";
 }
 
 const KEYCODE_MAP: Record<string, number> = {
@@ -133,12 +178,14 @@ const KEYCODE_MAP: Record<string, number> = {
   search: 84,
   camera: 27,
   media_play_pause: 85,
+  paste: KEYCODE_PASTE,
 };
 
 export async function pressKey(
   key?: string,
   deviceId?: string,
   keycode?: number,
+  repeat: number = 1,
 ): Promise<void> {
   const id = await resolveDevice(deviceId);
   const code = keycode ?? (key ? KEYCODE_MAP[key] : undefined);
@@ -147,25 +194,57 @@ export async function pressKey(
       `Unknown key: ${key}. Supported keys: ${Object.keys(KEYCODE_MAP).join(", ")}`,
     );
   }
-  await exec(adb(id, `shell input keyevent ${code}`));
+  const codes = Array(Math.max(1, repeat)).fill(String(code));
+  await adb(id, ["shell", "input", "keyevent", ...codes], { timeout: 60_000 });
 }
 
 export async function setClipboard(
   deviceId: string,
   text: string,
 ): Promise<void> {
-  // Escape for shell: replace single quotes and other special chars
-  const escaped = text
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/\$/g, "\\$")
-    .replace(/`/g, "\\`");
   try {
-    await exec(adb(deviceId, `shell cmd clipboard set-text "${escaped}"`));
+    await adb(deviceId, [
+      "shell",
+      "cmd",
+      "clipboard",
+      "set-text",
+      shellQuote(text),
+    ]);
   } catch {
-    // Fallback for API < 29
-    await exec(adb(deviceId, `shell am broadcast -a clipper.set -e text "${escaped}"`));
+    // Fallback for API < 29 (requires the Clipper helper app)
+    await adb(deviceId, [
+      "shell",
+      "am",
+      "broadcast",
+      "-a",
+      "clipper.set",
+      "-e",
+      "text",
+      shellQuote(text),
+    ]);
   }
+}
+
+export async function getClipboard(deviceId: string): Promise<string> {
+  try {
+    const output = await adb(deviceId, ["shell", "cmd", "clipboard", "get-text"]);
+    const trimmed = output.trim();
+    if (trimmed && !/^(error|exception|usage|unknown command)/i.test(trimmed)) {
+      return trimmed;
+    }
+  } catch {
+    // Fall through to dumpsys
+  }
+
+  const dump = await adb(deviceId, ["shell", "dumpsys", "clipboard"], {
+    timeout: 30_000,
+  });
+  const match = dump.match(/\{T:([\s\S]*?)\}/);
+  if (match) return match[1];
+
+  throw new Error(
+    "Could not read the clipboard. Android 10+ restricts clipboard access to the focused app; this works best on emulators. Alternatively, verify the paste result through the UI.",
+  );
 }
 
 const LOG_LEVEL_MAP: Record<string, string> = {
@@ -178,34 +257,33 @@ const LOG_LEVEL_MAP: Record<string, string> = {
 
 export async function getLogs(
   deviceId: string,
-  options: { tag?: string; level?: string; lines?: number },
+  options: LogOptions,
 ): Promise<string> {
-  const parts = [adb(deviceId, "logcat -d -v time")];
+  const args = ["logcat", "-d", "-v", "time"];
+  const levelLetter = options.level
+    ? (LOG_LEVEL_MAP[options.level] ?? "I")
+    : undefined;
 
   if (options.tag) {
-    parts.length = 0;
-    parts.push(adb(deviceId, `logcat -d -v time -s ${options.tag}`));
-  } else if (options.level) {
-    const levelLetter = LOG_LEVEL_MAP[options.level] ?? "I";
-    parts.length = 0;
-    parts.push(adb(deviceId, `logcat -d -v time *:${levelLetter}`));
+    args.push("-s", levelLetter ? `${options.tag}:${levelLetter}` : options.tag);
+  } else if (levelLetter) {
+    args.push(`*:${levelLetter}`);
   }
 
+  const output = await adb(deviceId, args, { timeout: 30_000 });
   const lines = options.lines ?? 50;
-  const cmd = `${parts[0]} | tail -n ${lines}`;
-
-  return exec(cmd, { timeout: 30_000 });
+  return output.split("\n").slice(-lines).join("\n");
 }
 
 export async function clearLogs(deviceId: string): Promise<void> {
-  await exec(adb(deviceId, "logcat -c"), { timeout: 10_000 });
+  await adb(deviceId, ["logcat", "-c"], { timeout: 10_000 });
 }
 
 export async function clearAppData(
   deviceId: string,
   packageName: string,
 ): Promise<void> {
-  await exec(adb(deviceId, `shell pm clear ${packageName}`));
+  await adb(deviceId, ["shell", "pm", "clear", packageName]);
 }
 
 export async function clearAppCache(
@@ -213,12 +291,19 @@ export async function clearAppCache(
   packageName: string,
 ): Promise<void> {
   try {
-    await exec(adb(deviceId, `shell run-as ${packageName} rm -rf cache/`));
-    await exec(adb(deviceId, `shell run-as ${packageName} rm -rf code_cache/`));
+    await adb(deviceId, ["shell", "run-as", packageName, "rm", "-rf", "cache/"]);
+    await adb(deviceId, [
+      "shell",
+      "run-as",
+      packageName,
+      "rm",
+      "-rf",
+      "code_cache/",
+    ]);
   } catch {
-    // Fallback: try pm clear --cache-only (API 30+)
+    // Fallback: pm clear --cache-only (API 30+)
     try {
-      await exec(adb(deviceId, `shell pm clear --cache-only ${packageName}`));
+      await adb(deviceId, ["shell", "pm", "clear", "--cache-only", packageName]);
     } catch {
       throw new Error(
         `Cannot clear cache for ${packageName}. The app may not be debuggable. Use mode: "all" to clear all data instead.`,
@@ -231,21 +316,83 @@ export async function killApp(
   deviceId: string,
   packageName: string,
 ): Promise<void> {
-  await exec(adb(deviceId, `shell am force-stop ${packageName}`));
+  await adb(deviceId, ["shell", "am", "force-stop", packageName]);
+}
+
+export async function installApp(
+  deviceId: string,
+  apkPath: string,
+): Promise<string> {
+  const output = await run("adb", ["-s", deviceId, "install", "-r", apkPath], {
+    timeout: 120_000,
+  });
+  return output.trim();
+}
+
+export async function uninstallApp(
+  deviceId: string,
+  packageName: string,
+): Promise<void> {
+  await run("adb", ["-s", deviceId, "uninstall", packageName], {
+    timeout: 60_000,
+  });
+}
+
+export async function getAppInfo(
+  deviceId: string,
+  packageName: string,
+): Promise<AppInfo> {
+  const output = await adb(deviceId, ["shell", "dumpsys", "package", packageName], {
+    timeout: 30_000,
+  });
+
+  if (!output.includes(`Package [${packageName}]`)) {
+    return { installed: false };
+  }
+
+  return {
+    installed: true,
+    version_name: output.match(/versionName=(\S+)/)?.[1],
+    version_code: output.match(/versionCode=(\d+)/)?.[1],
+  };
+}
+
+export async function getForegroundApp(
+  deviceId: string,
+): Promise<ForegroundApp> {
+  const activities = await adb(
+    deviceId,
+    ["shell", "dumpsys", "activity", "activities"],
+    { timeout: 30_000 },
+  );
+  const resumed = activities.match(
+    /(?:mResumedActivity|topResumedActivity)[^{]*\{[^ ]+ [^ ]+ ([^ /]+)\/([^ }]+)/,
+  );
+  if (resumed) return { package: resumed[1], activity: resumed[2] };
+
+  const windows = await adb(deviceId, ["shell", "dumpsys", "window", "windows"], {
+    timeout: 30_000,
+  });
+  const focus = windows.match(
+    /mCurrentFocus=Window\{[^ ]+ [^ ]+ ([^ /]+)\/([^ }]+)/,
+  );
+  if (focus) return { package: focus[1], activity: focus[2] };
+
+  throw new Error("Could not determine the foreground app from dumpsys output.");
 }
 
 export async function setWifi(
   deviceId: string,
   enabled: boolean,
 ): Promise<void> {
-  await exec(adb(deviceId, `shell svc wifi ${enabled ? "enable" : "disable"}`));
+  await adb(deviceId, ["shell", "svc", "wifi", enabled ? "enable" : "disable"]);
 }
 
 export async function setMobileData(
   deviceId: string,
   enabled: boolean,
 ): Promise<void> {
-  await exec(adb(deviceId, `shell svc data ${enabled ? "enable" : "disable"}`));
+  await adb(deviceId, ["shell", "svc", "data", enabled ? "enable" : "disable"]);
 }
 
 export async function setAirplaneMode(
@@ -253,12 +400,119 @@ export async function setAirplaneMode(
   enabled: boolean,
 ): Promise<void> {
   try {
-    await exec(adb(deviceId, `shell cmd connectivity airplane-mode ${enabled ? "enable" : "disable"}`));
+    await adb(deviceId, [
+      "shell",
+      "cmd",
+      "connectivity",
+      "airplane-mode",
+      enabled ? "enable" : "disable",
+    ]);
   } catch {
     // Fallback for API < 29
-    await exec(adb(deviceId, `shell settings put global airplane_mode_on ${enabled ? "1" : "0"}`));
-    await exec(adb(deviceId, `shell am broadcast -a android.intent.action.AIRPLANE_MODE --ez state ${enabled}`));
+    await adb(deviceId, [
+      "shell",
+      "settings",
+      "put",
+      "global",
+      "airplane_mode_on",
+      enabled ? "1" : "0",
+    ]);
+    await adb(deviceId, [
+      "shell",
+      "am",
+      "broadcast",
+      "-a",
+      "android.intent.action.AIRPLANE_MODE",
+      "--ez",
+      "state",
+      String(enabled),
+    ]);
   }
+}
+
+export async function setNetworkThrottle(
+  deviceId: string,
+  options: { delay?: string; speed?: string },
+): Promise<void> {
+  requireEmulator(deviceId, "Network throttling uses the emulator console (adb emu network …)");
+  if (options.delay) {
+    await run("adb", ["-s", deviceId, "emu", "network", "delay", options.delay]);
+  }
+  if (options.speed) {
+    await run("adb", ["-s", deviceId, "emu", "network", "speed", options.speed]);
+  }
+}
+
+export async function setLocation(
+  deviceId: string,
+  latitude: number,
+  longitude: number,
+): Promise<void> {
+  requireEmulator(deviceId, "Mock GPS uses the emulator console (adb emu geo fix …). For physical devices use a mock-location app");
+  // geo fix takes longitude BEFORE latitude
+  await run("adb", [
+    "-s",
+    deviceId,
+    "emu",
+    "geo",
+    "fix",
+    String(longitude),
+    String(latitude),
+  ]);
+}
+
+function requireEmulator(deviceId: string, why: string): void {
+  if (!deviceId.startsWith("emulator-")) {
+    throw new Error(`${why}. Device "${deviceId}" is not an emulator.`);
+  }
+}
+
+export async function setAppearance(
+  deviceId: string,
+  mode: "dark" | "light",
+): Promise<void> {
+  await adb(deviceId, [
+    "shell",
+    "cmd",
+    "uimode",
+    "night",
+    mode === "dark" ? "yes" : "no",
+  ]);
+}
+
+const ROTATION_MAP: Record<string, number> = {
+  portrait: 0,
+  landscape: 1,
+  reverse_portrait: 2,
+  reverse_landscape: 3,
+};
+
+export async function rotate(
+  deviceId: string,
+  orientation: string,
+): Promise<void> {
+  const value = ROTATION_MAP[orientation];
+  if (value === undefined) {
+    throw new Error(
+      `Unknown orientation: ${orientation}. Supported: ${Object.keys(ROTATION_MAP).join(", ")}`,
+    );
+  }
+  await adb(deviceId, [
+    "shell",
+    "settings",
+    "put",
+    "system",
+    "accelerometer_rotation",
+    "0",
+  ]);
+  await adb(deviceId, [
+    "shell",
+    "settings",
+    "put",
+    "system",
+    "user_rotation",
+    String(value),
+  ]);
 }
 
 export async function getUiTree(deviceId?: string): Promise<UiElement[]> {
@@ -268,8 +522,14 @@ export async function getUiTree(deviceId?: string): Promise<UiElement[]> {
   const strategies: Array<() => Promise<string | null>> = [
     () => dumpUiViaTty(id),
     () => dumpUiViaFile(id),
-    async () => { await delay(800); return dumpUiViaTty(id); },
-    async () => { await delay(800); return dumpUiViaFile(id); },
+    async () => {
+      await delay(800);
+      return dumpUiViaTty(id);
+    },
+    async () => {
+      await delay(800);
+      return dumpUiViaFile(id);
+    },
   ];
 
   for (const strategy of strategies) {
@@ -294,25 +554,25 @@ function delay(ms: number): Promise<void> {
 }
 
 async function dumpUiViaTty(deviceId: string): Promise<string | null> {
-  const output = await exec(adb(deviceId, "exec-out uiautomator dump /dev/tty"), {
-    timeout: 30_000,
-  });
+  const output = await run(
+    "adb",
+    ["-s", deviceId, "exec-out", "uiautomator", "dump", "/dev/tty"],
+    { timeout: 30_000 },
+  );
 
-  // Strip null bytes and other binary artifacts
   const cleaned = output.replace(/\0/g, "").trim();
   return extractXml(cleaned);
 }
 
 async function dumpUiViaFile(deviceId: string): Promise<string | null> {
   const remotePath = "/sdcard/window_dump.xml";
-  await exec(adb(deviceId, `shell uiautomator dump ${remotePath}`), {
+  await adb(deviceId, ["shell", "uiautomator", "dump", remotePath], {
     timeout: 30_000,
   });
-  const output = await exec(adb(deviceId, `shell cat ${remotePath}`), {
+  const output = await adb(deviceId, ["shell", "cat", remotePath], {
     timeout: 10_000,
   });
-  // Clean up remote file
-  exec(adb(deviceId, `shell rm -f ${remotePath}`)).catch(() => {});
+  adb(deviceId, ["shell", "rm", "-f", remotePath]).catch(() => {});
 
   const cleaned = output.replace(/\0/g, "").trim();
   return extractXml(cleaned);
@@ -366,7 +626,7 @@ function parseUiXml(xml: string): UiElement[] {
     elements.push({
       index,
       type,
-      text: displayText,
+      text: unescapeXml(displayText),
       bounds: {
         x: x1,
         y: y1,
@@ -376,7 +636,7 @@ function parseUiXml(xml: string): UiElement[] {
       center_x: Math.round((x1 + x2) / 2),
       center_y: Math.round((y1 + y2) / 2),
       clickable,
-      resource_id: resourceId,
+      resource_id: resourceId ? unescapeXml(resourceId) : undefined,
       enabled,
       focused,
     });
@@ -392,22 +652,27 @@ function extractAttr(attrs: string, name: string): string | undefined {
   return match ? match[1] : undefined;
 }
 
-export async function getScreenInfo(
-  deviceId?: string,
-): Promise<ScreenInfo> {
+export async function getScreenInfo(deviceId?: string): Promise<ScreenInfo> {
   const id = await resolveDevice(deviceId);
 
-  const [sizeOutput, densityOutput] = await Promise.all([
-    exec(adb(id, "shell wm size")),
-    exec(adb(id, "shell wm density")),
+  const [sizeOutput, densityOutput, rotation] = await Promise.all([
+    adb(id, ["shell", "wm", "size"]),
+    adb(id, ["shell", "wm", "density"]),
+    getRotation(id),
   ]);
 
-  // Parse "Physical size: 1080x1920"
-  const sizeMatch = sizeOutput.match(/(\d+)x(\d+)/);
-  const width = sizeMatch ? parseInt(sizeMatch[1], 10) : 0;
-  const height = sizeMatch ? parseInt(sizeMatch[2], 10) : 0;
+  // Prefer "Override size" when present (wm size can report both)
+  const sizeMatch =
+    sizeOutput.match(/Override size:\s*(\d+)x(\d+)/) ??
+    sizeOutput.match(/(\d+)x(\d+)/);
+  let width = sizeMatch ? parseInt(sizeMatch[1], 10) : 0;
+  let height = sizeMatch ? parseInt(sizeMatch[2], 10) : 0;
 
-  // Parse "Physical density: 420"
+  // wm size reports the natural (portrait) size regardless of rotation
+  if (rotation === 1 || rotation === 3) {
+    [width, height] = [height, width];
+  }
+
   const densityMatch = densityOutput.match(/(\d+)/);
   const density = densityMatch ? parseInt(densityMatch[1], 10) : 0;
 
@@ -416,22 +681,153 @@ export async function getScreenInfo(
   return { width, height, density, orientation };
 }
 
+async function getRotation(deviceId: string): Promise<number> {
+  try {
+    const output = await adb(deviceId, ["shell", "dumpsys", "window"], {
+      timeout: 15_000,
+    });
+    const match = output.match(
+      /(?:mCurrentRotation|mRotation)=(?:ROTATION_)?(\d+)/,
+    );
+    if (!match) return 0;
+    const value = parseInt(match[1], 10);
+    return value >= 90 ? value / 90 : value;
+  } catch {
+    return 0;
+  }
+}
+
 export async function launchApp(
   packageName: string,
   deviceId?: string,
 ): Promise<void> {
   const id = await resolveDevice(deviceId);
-  await exec(
-    adb(id, `shell monkey -p ${packageName} -c android.intent.category.LAUNCHER 1`),
-  );
+  await adb(id, [
+    "shell",
+    "monkey",
+    "-p",
+    packageName,
+    "-c",
+    "android.intent.category.LAUNCHER",
+    "1",
+  ]);
 }
 
-export async function openUrl(
-  url: string,
-  deviceId?: string,
-): Promise<void> {
+export async function openUrl(url: string, deviceId?: string): Promise<void> {
   const id = await resolveDevice(deviceId);
-  await exec(
-    adb(id, `shell am start -a android.intent.action.VIEW -d "${url}"`),
-  );
+  // shellQuote protects &-separated query params from the device-side shell
+  await adb(id, [
+    "shell",
+    "am",
+    "start",
+    "-a",
+    "android.intent.action.VIEW",
+    "-d",
+    shellQuote(url),
+  ]);
+}
+
+const REMOTE_RECORDING_PATH = "/sdcard/mcp-mobile-recording.mp4";
+const activeRecordings = new Map<string, ChildProcess>();
+
+export async function startRecording(deviceId?: string): Promise<string> {
+  const id = await resolveDevice(deviceId);
+  if (activeRecordings.has(id)) {
+    throw new Error(
+      `A recording is already in progress on ${id}. Stop it first with action: "stop".`,
+    );
+  }
+
+  const child = spawnProc("adb", [
+    "-s",
+    id,
+    "shell",
+    "screenrecord",
+    "--time-limit",
+    "180",
+    REMOTE_RECORDING_PATH,
+  ]);
+  activeRecordings.set(id, child);
+
+  await delay(500);
+  if (child.exitCode !== null && child.exitCode !== 0) {
+    activeRecordings.delete(id);
+    throw new Error(
+      "screenrecord failed to start. Some emulators without GPU acceleration do not support it.",
+    );
+  }
+
+  return id;
+}
+
+export async function stopRecording(deviceId?: string): Promise<string> {
+  const id = await resolveDevice(deviceId);
+  const child = activeRecordings.get(id);
+  if (!child) {
+    throw new Error(
+      `No active recording on ${id}. Start one with action: "start".`,
+    );
+  }
+  activeRecordings.delete(id);
+
+  if (child.exitCode === null) {
+    // SIGINT on the device lets screenrecord finalize the mp4
+    await adb(id, ["shell", "kill -2 $(pidof screenrecord)"]).catch(() =>
+      child.kill(),
+    );
+    await waitForExit(child, 3000);
+  }
+  await delay(300);
+
+  const localPath = join(tmpdir(), `mcp-recording-${id}-${Date.now()}.mp4`);
+  await run("adb", ["-s", id, "pull", REMOTE_RECORDING_PATH, localPath], {
+    timeout: 60_000,
+  });
+  adb(id, ["shell", "rm", "-f", REMOTE_RECORDING_PATH]).catch(() => {});
+
+  return localPath;
+}
+
+function waitForExit(child: ChildProcess, timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    if (child.exitCode !== null) return resolve();
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve();
+    }, timeoutMs);
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
+const KEYCODE_MOVE_END = 123;
+const KEYCODE_DEL = 67;
+
+export async function clearTextField(
+  deviceId?: string,
+  maxChars: number = 100,
+): Promise<number> {
+  const id = await resolveDevice(deviceId);
+
+  let chars = maxChars;
+  try {
+    const tree = await getUiTree(id);
+    const focused = tree.find((el) => el.focused);
+    if (focused?.text) chars = Math.min(focused.text.length + 5, 250);
+  } catch {
+    // No tree available — fall back to maxChars deletions
+  }
+
+  await adb(id, ["shell", "input", "keyevent", String(KEYCODE_MOVE_END)]);
+
+  const codes = Array(chars).fill(String(KEYCODE_DEL));
+  for (let i = 0; i < codes.length; i += 50) {
+    await adb(id, ["shell", "input", "keyevent", ...codes.slice(i, i + 50)], {
+      timeout: 60_000,
+    });
+  }
+
+  return chars;
 }

@@ -32,3 +32,22 @@ export interface ScreenInfo {
   density: number;
   orientation: string;
 }
+
+export interface AppInfo {
+  installed: boolean;
+  version_name?: string;
+  version_code?: string;
+}
+
+export interface ForegroundApp {
+  package: string;
+  activity?: string;
+}
+
+export type TypeTextMethod = "keyboard" | "clipboard_paste";
+
+export interface LogOptions {
+  tag?: string;
+  level?: string;
+  lines?: number;
+}

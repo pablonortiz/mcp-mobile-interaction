@@ -1,9 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import * as android from "../platforms/android.js";
-import * as ios from "../platforms/ios.js";
+import { getDriver } from "../platforms/driver.js";
 import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
+import { DESTRUCTIVE } from "../utils/annotations.js";
 
 export function registerKillAppTool(server: McpServer) {
   server.tool(
@@ -28,17 +28,12 @@ export function registerKillAppTool(server: McpServer) {
         .optional()
         .describe("Ms to wait before observing. Default: 500"),
     },
+    DESTRUCTIVE,
     async ({ platform, device_id, package: packageName, observe, observe_delay_ms }) => {
-      const deviceId = device_id ??
-        (platform === "android"
-          ? await android.getFirstDeviceId()
-          : await ios.getFirstDeviceId());
+      const driver = getDriver(platform);
+      const deviceId = device_id ?? (await driver.getFirstDeviceId());
 
-      if (platform === "android") {
-        await android.killApp(deviceId, packageName);
-      } else {
-        await ios.killApp(deviceId, packageName);
-      }
+      await driver.killApp(deviceId, packageName);
 
       const observation = observe === "screenshot"
         ? await performObservation({

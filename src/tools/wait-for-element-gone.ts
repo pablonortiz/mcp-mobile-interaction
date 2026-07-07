@@ -1,10 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import * as android from "../platforms/android.js";
-import * as ios from "../platforms/ios.js";
+import { getDriver } from "../platforms/driver.js";
 import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
 import { matchElement, hasCriteria, describeCriteria, type MatchCriteria } from "../utils/element-matcher.js";
+import { READ_ONLY } from "../utils/annotations.js";
 
 export function registerWaitForElementGoneTool(server: McpServer) {
   server.tool(
@@ -47,6 +47,7 @@ export function registerWaitForElementGoneTool(server: McpServer) {
         .optional()
         .describe("Capture screen state after element disappears. Default: none"),
     },
+    READ_ONLY,
     async ({
       platform,
       device_id,
@@ -77,16 +78,13 @@ export function registerWaitForElementGoneTool(server: McpServer) {
         };
       }
 
+      const driver = getDriver(platform);
       const timeout = timeout_ms ?? 10_000;
       const pollInterval = poll_interval_ms ?? 500;
       const start = Date.now();
 
       while (Date.now() - start < timeout) {
-        const tree =
-          platform === "android"
-            ? await android.getUiTree(device_id)
-            : await ios.getUiTree(device_id);
-
+        const tree = await driver.getUiTree(device_id);
         const matches = tree.filter((el) => matchElement(el, criteria));
 
         if (matches.length === 0) {

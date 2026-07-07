@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import * as android from "../platforms/android.js";
-import * as ios from "../platforms/ios.js";
+import { getDriver } from "../platforms/driver.js";
+import { READ_ONLY } from "../utils/annotations.js";
 
 export function registerGetScreenInfoTool(server: McpServer) {
   server.tool(
@@ -14,17 +14,15 @@ export function registerGetScreenInfoTool(server: McpServer) {
         .optional()
         .describe("Device ID. Omit to use the first connected device."),
     },
+    READ_ONLY,
     async ({ platform, device_id }) => {
-      const info =
-        platform === "android"
-          ? await android.getScreenInfo(device_id)
-          : await ios.getScreenInfo(device_id);
+      const info = await getDriver(platform).getScreenInfo(device_id);
 
       return {
         content: [
           {
             type: "text" as const,
-            text: JSON.stringify(info, null, 2),
+            text: JSON.stringify(info),
           },
         ],
       };

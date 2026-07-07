@@ -1,40 +1,55 @@
-import { jest } from "@jest/globals";
-import { exec, execBuffer } from "../../src/utils/exec.js";
+import { run, runBuffer, shellQuote } from "../../src/utils/exec.js";
 
-describe("exec", () => {
+describe("run", () => {
   it("resolves with stdout for a successful command", async () => {
-    const result = await exec("echo hello");
+    const result = await run("echo", ["hello"]);
     expect(result).toContain("hello");
   });
 
+  it("passes arguments verbatim without local shell interpretation", async () => {
+    const result = await run("echo", ["a&b", "$(uname)", "it's"]);
+    expect(result).toContain("a&b $(uname) it's");
+  });
+
   it("rejects when command fails", async () => {
-    await expect(exec("nonexistent_cmd_xyz_123")).rejects.toThrow(
+    await expect(run("nonexistent_cmd_xyz_123", [])).rejects.toThrow(
       /Command failed/
     );
   });
 
   it("rejects when command times out", async () => {
-    await expect(
-      exec("sleep 10", { timeout: 100 })
-    ).rejects.toThrow();
+    await expect(run("sleep", ["10"], { timeout: 100 })).rejects.toThrow();
   });
 
-  it("uses default timeout of 15s when not specified", async () => {
-    // Just verify it doesn't throw for a fast command
-    const result = await exec("echo ok");
-    expect(result).toContain("ok");
+  it("pipes stdin to the process when provided", async () => {
+    const result = await run("cat", [], { stdin: "piped content" });
+    expect(result).toBe("piped content");
   });
 });
 
-describe("execBuffer", () => {
+describe("runBuffer", () => {
   it("resolves with a Buffer for a successful command", async () => {
-    const result = await execBuffer("echo binary");
+    const result = await runBuffer("echo", ["binary"]);
     expect(Buffer.isBuffer(result)).toBe(true);
   });
 
   it("rejects when command fails", async () => {
-    await expect(execBuffer("nonexistent_cmd_xyz_456")).rejects.toThrow(
+    await expect(runBuffer("nonexistent_cmd_xyz_456", [])).rejects.toThrow(
       /Command failed/
     );
+  });
+});
+
+describe("shellQuote", () => {
+  it("wraps the value in single quotes", () => {
+    expect(shellQuote("hello world")).toBe("'hello world'");
+  });
+
+  it("neutralizes shell metacharacters", () => {
+    expect(shellQuote("a&b|c$(x)`y`")).toBe("'a&b|c$(x)`y`'");
+  });
+
+  it("escapes embedded single quotes", () => {
+    expect(shellQuote("it's")).toBe("'it'\\''s'");
   });
 });

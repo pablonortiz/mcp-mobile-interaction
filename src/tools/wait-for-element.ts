@@ -1,12 +1,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import * as android from "../platforms/android.js";
-import * as ios from "../platforms/ios.js";
+import { getDriver } from "../platforms/driver.js";
 import type { UiElement } from "../types.js";
 import { performObservation } from "../utils/observe.js";
 import { filterUiElements } from "../utils/ui-filter.js";
+import { formatUiTree } from "../utils/format-ui.js";
 import { buildResponseContent } from "../utils/format-response.js";
 import { matchElement, describeCriteria, type MatchCriteria } from "../utils/element-matcher.js";
+import { READ_ONLY } from "../utils/annotations.js";
 
 export function registerWaitForElementTool(server: McpServer) {
   server.tool(
@@ -53,6 +54,7 @@ export function registerWaitForElementTool(server: McpServer) {
         .optional()
         .describe("Additional observation after element found. Default: none"),
     },
+    READ_ONLY,
     async ({
       platform,
       device_id,
@@ -65,6 +67,7 @@ export function registerWaitForElementTool(server: McpServer) {
       poll_interval_ms,
       observe,
     }) => {
+      const driver = getDriver(platform);
       const timeout = timeout_ms ?? 10_000;
       const pollInterval = poll_interval_ms ?? 500;
       const start = Date.now();
@@ -79,10 +82,7 @@ export function registerWaitForElementTool(server: McpServer) {
       let lastTree: UiElement[] = [];
 
       while (Date.now() - start < timeout) {
-        const tree =
-          platform === "android"
-            ? await android.getUiTree(device_id)
-            : await ios.getUiTree(device_id);
+        const tree = await driver.getUiTree(device_id);
 
         lastTree = tree;
         const matches = tree.filter((el) => matchElement(el, criteria));
@@ -96,7 +96,7 @@ export function registerWaitForElementTool(server: McpServer) {
             stabilize: false,
           });
 
-          const matchText = `Found ${matches.length} matching element(s) after ${Date.now() - start}ms:\n${JSON.stringify(matches, null, 2)}`;
+          const matchText = `Found ${matches.length} matching element(s) after ${Date.now() - start}ms:\n${formatUiTree(matches, "Matches")}`;
 
           return {
             content: buildResponseContent(matchText, observation),
@@ -112,7 +112,7 @@ export function registerWaitForElementTool(server: McpServer) {
         content: [
           {
             type: "text" as const,
-            text: `Timeout after ${timeout}ms: no element found matching criteria (${describeCriteria(criteria)}). Last UI tree (${filtered.length} relevant elements):\n${JSON.stringify(filtered, null, 2)}`,
+            text: `Timeout after ${timeout}ms: no element found matching criteria (${describeCriteria(criteria)}). ${formatUiTree(filtered, "Last UI tree")}`,
           },
         ],
         isError: true,

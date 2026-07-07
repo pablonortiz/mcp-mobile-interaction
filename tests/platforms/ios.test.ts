@@ -1,49 +1,62 @@
 /**
  * Tests for src/platforms/ios.ts
  *
- * We mock the exec/execBuffer utilities so no real xcrun/idb commands run.
- * This lets us test command construction, device list parsing from simctl JSON,
- * idb describe-all parsing, and key mapping.
+ * We mock the exec utilities so no real xcrun/idb commands run. simctl has NO
+ * UI interaction commands, so tap/swipe/type/UI-tree require idb — these tests
+ * pin that requirement and the simctl-based device/app/clipboard commands.
  */
 
 import { jest } from "@jest/globals";
 
-const mockExec = jest.fn<(cmd: string, opts?: any) => Promise<string>>();
-const mockExecBuffer = jest.fn<(cmd: string, opts?: any) => Promise<Buffer>>();
+const mockRun = jest.fn<(file: string, args: string[], opts?: any) => Promise<string>>();
+const mockRunBuffer = jest.fn<(file: string, args: string[], opts?: any) => Promise<Buffer>>();
+const mockSpawnProc = jest.fn();
 
 jest.unstable_mockModule("../../src/utils/exec.js", () => ({
-  exec: mockExec,
-  execBuffer: mockExecBuffer,
+  run: mockRun,
+  runBuffer: mockRunBuffer,
+  spawnProc: mockSpawnProc,
+  shellQuote: (value: string) => `'${value.replace(/'/g, `'\\''`)}'`,
 }));
 
 const iosMod = await import("../../src/platforms/ios.js");
 
+const SIMCTL_LIST = JSON.stringify({
+  devices: {
+    "com.apple.CoreSimulator.SimRuntime.iOS-17-2": [
+      { udid: "sim-1", name: "iPhone 15", state: "Booted" },
+      { udid: "sim-2", name: "iPad Air", state: "Shutdown" },
+    ],
+  },
+});
+
+function mockCommands({ idb }: { idb: boolean }) {
+  mockRun.mockImplementation(async (file, args) => {
+    const cmd = (args as string[]).join(" ");
+    if (file === "which") {
+      if (idb) return "/usr/local/bin/idb";
+      throw new Error("idb not found");
+    }
+    if (file === "xcrun" && cmd.includes("list devices")) return SIMCTL_LIST;
+    return "";
+  });
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
+  iosMod.resetCaches();
 });
 
 // ---------------------------------------------------------------------------
-// listDevices — parsing xcrun simctl list devices --json
+// listDevices / getFirstDeviceId
 // ---------------------------------------------------------------------------
 describe("listDevices", () => {
   it("parses simulators from xcrun simctl JSON output", async () => {
-    const simctlOutput = JSON.stringify({
-      devices: {
-        "com.apple.CoreSimulator.SimRuntime.iOS-17-2": [
-          { udid: "AAAA-1111", name: "iPhone 15", state: "Booted" },
-          { udid: "BBBB-2222", name: "iPad Air", state: "Shutdown" },
-        ],
-      },
-    });
-    // xcrun simctl list devices available --json
-    mockExec.mockResolvedValueOnce(simctlOutput);
-    // hasIdb check: "which idb" fails => no idb
-    mockExec.mockRejectedValueOnce(new Error("not found"));
-
+    mockCommands({ idb: false });
     const devices = await iosMod.listDevices();
     expect(devices).toHaveLength(2);
     expect(devices[0]).toEqual({
-      id: "AAAA-1111",
+      id: "sim-1",
       name: "iPhone 15 (iOS-17-2)",
       platform: "ios",
       status: "booted",
@@ -52,47 +65,30 @@ describe("listDevices", () => {
   });
 
   it("returns empty list when xcrun simctl fails and idb unavailable", async () => {
-    // xcrun fails
-    mockExec.mockRejectedValueOnce(new Error("xcrun not found"));
-    // hasIdb fails
-    mockExec.mockRejectedValueOnce(new Error("not found"));
-
+    mockRun.mockRejectedValue(new Error("nothing works"));
     const devices = await iosMod.listDevices();
     expect(devices).toHaveLength(0);
   });
 });
 
-// ---------------------------------------------------------------------------
-// getFirstDeviceId
-// ---------------------------------------------------------------------------
 describe("getFirstDeviceId", () => {
   it("prefers booted simulators", async () => {
-    const simctlOutput = JSON.stringify({
-      devices: {
-        "com.apple.CoreSimulator.SimRuntime.iOS-17-2": [
-          { udid: "SHUT-1111", name: "iPhone A", state: "Shutdown" },
-          { udid: "BOOT-2222", name: "iPhone B", state: "Booted" },
-        ],
-      },
-    });
-    mockExec.mockResolvedValueOnce(simctlOutput);
-    mockExec.mockRejectedValueOnce(new Error("no idb"));
-
+    mockCommands({ idb: false });
     const id = await iosMod.getFirstDeviceId();
-    expect(id).toBe("BOOT-2222");
+    expect(id).toBe("sim-1");
   });
 
   it("throws when no booted or connected devices exist", async () => {
-    const simctlOutput = JSON.stringify({
-      devices: {
-        "com.apple.CoreSimulator.SimRuntime.iOS-17-2": [
-          { udid: "SHUT-1111", name: "iPhone A", state: "Shutdown" },
-        ],
-      },
+    mockRun.mockImplementation(async (file, args) => {
+      if (file === "which") throw new Error("no idb");
+      return JSON.stringify({
+        devices: {
+          "com.apple.CoreSimulator.SimRuntime.iOS-17-2": [
+            { udid: "SHUT-1111", name: "iPhone A", state: "Shutdown" },
+          ],
+        },
+      });
     });
-    mockExec.mockResolvedValueOnce(simctlOutput);
-    mockExec.mockRejectedValueOnce(new Error("no idb"));
-
     await expect(iosMod.getFirstDeviceId()).rejects.toThrow(
       /No connected iOS devices or booted simulators found/
     );
@@ -100,300 +96,325 @@ describe("getFirstDeviceId", () => {
 });
 
 // ---------------------------------------------------------------------------
-// tap — command construction for simulators
+// UI interaction requires idb — simctl has no tap/swipe/type commands
 // ---------------------------------------------------------------------------
-describe("tap", () => {
-  it("uses xcrun simctl io tap for simulators", async () => {
-    // isSimulator check
-    mockExec.mockResolvedValueOnce(
-      JSON.stringify({
-        devices: {
-          "com.apple.CoreSimulator.SimRuntime.iOS-17": [
-            { udid: "sim-1", name: "iPhone", state: "Booted" },
-          ],
-        },
-      })
-    );
-    mockExec.mockResolvedValueOnce(""); // tap command
+describe("interaction without idb", () => {
+  beforeEach(() => mockCommands({ idb: false }));
+
+  it("tap throws a descriptive error", async () => {
+    await expect(iosMod.tap(150, 300, "sim-1")).rejects.toThrow(/idb is required/);
+  });
+
+  it("swipe throws a descriptive error", async () => {
+    await expect(iosMod.swipe(0, 500, 0, 100, 300, "sim-1")).rejects.toThrow(/idb is required/);
+  });
+
+  it("typeText throws a descriptive error", async () => {
+    await expect(iosMod.typeText("hello", "sim-1")).rejects.toThrow(/idb is required/);
+  });
+
+  it("getUiTree throws a descriptive error", async () => {
+    await expect(iosMod.getUiTree("sim-1")).rejects.toThrow(/idb is required/);
+  });
+});
+
+describe("interaction with idb", () => {
+  beforeEach(() => mockCommands({ idb: true }));
+
+  it("tap uses idb ui tap", async () => {
     await iosMod.tap(150, 300, "sim-1");
-    const tapCall = mockExec.mock.calls[1][0] as string;
-    expect(tapCall).toBe("xcrun simctl io sim-1 tap 150 300");
+    expect(mockRun).toHaveBeenCalledWith(
+      "idb",
+      ["ui", "tap", "--udid", "sim-1", "150", "300"],
+    );
   });
-});
 
-// ---------------------------------------------------------------------------
-// doubleTap — command construction
-// ---------------------------------------------------------------------------
-describe("doubleTap", () => {
-  it("falls back to two rapid simctl taps when idb is unavailable", async () => {
-    // hasIdb fails
-    mockExec.mockRejectedValueOnce(new Error("not found"));
-    // isSimulator check (from first tap)
-    // Actually doubleTap checks hasIdb first, then falls back to two taps
-    // First tap
-    mockExec.mockResolvedValueOnce("");
-    // Second tap
-    mockExec.mockResolvedValueOnce("");
-    await iosMod.doubleTap(100, 200, "sim-1");
-    // First call is "which idb" (rejected), then two tap calls
-    const firstTap = mockExec.mock.calls[1][0] as string;
-    expect(firstTap).toBe("xcrun simctl io sim-1 tap 100 200");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// swipe — command construction
-// ---------------------------------------------------------------------------
-describe("swipe", () => {
-  it("uses xcrun simctl io swipe when idb is unavailable", async () => {
-    // hasIdb fails
-    mockExec.mockRejectedValueOnce(new Error("not found"));
-    mockExec.mockResolvedValueOnce(""); // swipe command
+  it("swipe uses idb ui swipe with duration in seconds", async () => {
     await iosMod.swipe(0, 500, 0, 100, 300, "sim-1");
-    const swipeCall = mockExec.mock.calls[1][0] as string;
-    expect(swipeCall).toBe("xcrun simctl io sim-1 swipe 0 500 0 100");
+    expect(mockRun).toHaveBeenCalledWith(
+      "idb",
+      ["ui", "swipe", "--udid", "sim-1", "--duration", "0.3", "0", "500", "0", "100"],
+    );
   });
-});
 
-// ---------------------------------------------------------------------------
-// longPress — command construction
-// ---------------------------------------------------------------------------
-describe("longPress", () => {
-  it("uses swipe-to-same-point via simctl when no idb", async () => {
-    // hasIdb fails
-    mockExec.mockRejectedValueOnce(new Error("not found"));
-    mockExec.mockResolvedValueOnce(""); // long press command
+  it("longPress uses idb ui tap with duration", async () => {
     await iosMod.longPress(200, 400, 2000, "sim-1");
-    const lpCall = mockExec.mock.calls[1][0] as string;
-    expect(lpCall).toBe("xcrun simctl io sim-1 swipe 200 400 200 400 --duration 2");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// screenshot — command construction for simulators
-// ---------------------------------------------------------------------------
-describe("screenshot", () => {
-  it("uses xcrun simctl io screenshot for simulators", async () => {
-    // isSimulator check
-    mockExec.mockResolvedValueOnce(
-      JSON.stringify({
-        devices: {
-          "com.apple.CoreSimulator.SimRuntime.iOS-17": [
-            { udid: "sim-1", name: "iPhone", state: "Booted" },
-          ],
-        },
-      })
-    );
-    // screenshot command
-    mockExec.mockResolvedValueOnce("");
-    // We need to mock fs.readFile and fs.unlink since screenshot reads a temp file
-    // This test just verifies the exec command is constructed correctly
-    // The screenshot function will fail at readFile, but we can verify the exec call
-    await iosMod.screenshot("sim-1").catch(() => {});
-    const screenshotCall = mockExec.mock.calls[1][0] as string;
-    expect(screenshotCall).toContain("xcrun simctl io sim-1 screenshot --type png");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// getUiTree — idb describe-all parsing
-// ---------------------------------------------------------------------------
-describe("getUiTree", () => {
-  it("throws when idb is unavailable and simctl fallback fails", async () => {
-    // hasIdb fails
-    mockExec.mockRejectedValueOnce(new Error("not found"));
-    // simctl fallback fails
-    mockExec.mockRejectedValueOnce(new Error("not supported"));
-
-    await expect(iosMod.getUiTree("sim-1")).rejects.toThrow(
-      /idb/
+    expect(mockRun).toHaveBeenCalledWith(
+      "idb",
+      ["ui", "tap", "--udid", "sim-1", "--duration", "2", "200", "400"],
     );
   });
+
+  it("typeText passes the text as a single verbatim argument", async () => {
+    const method = await iosMod.typeText("it's fine & good", "sim-1");
+    expect(method).toBe("keyboard");
+    expect(mockRun).toHaveBeenCalledWith(
+      "idb",
+      ["ui", "text", "--udid", "sim-1", "it's fine & good"],
+    );
+  });
+
+  it("getUiTree parses idb describe-all JSON lines", async () => {
+    mockRun.mockImplementation(async (file, args) => {
+      if (file === "which") return "/usr/local/bin/idb";
+      if (file === "idb" && (args as string[]).includes("describe-all")) {
+        return [
+          JSON.stringify({
+            AXLabel: "Login",
+            type: "Button",
+            frame: { x: 10, y: 20, width: 100, height: 40 },
+            enabled: true,
+            AXIdentifier: "login_button",
+          }),
+        ].join("\n");
+      }
+      return SIMCTL_LIST;
+    });
+
+    const elements = await iosMod.getUiTree("sim-1");
+    expect(elements).toHaveLength(1);
+    expect(elements[0].text).toBe("Login");
+    expect(elements[0].resource_id).toBe("login_button");
+    expect(elements[0].center_x).toBe(60);
+    expect(elements[0].center_y).toBe(40);
+  });
 });
 
 // ---------------------------------------------------------------------------
-// setClipboard — command construction
+// Clipboard — simctl pbcopy/pbpaste target the simulator, not the host Mac
 // ---------------------------------------------------------------------------
 describe("setClipboard", () => {
-  it("uses pbcopy via echo pipe", async () => {
-    mockExec.mockResolvedValueOnce("");
-    await iosMod.setClipboard("hello clipboard");
-    expect(mockExec).toHaveBeenCalledWith(
-      "echo 'hello clipboard' | pbcopy"
-    );
-  });
-
-  it("escapes single quotes in text", async () => {
-    mockExec.mockResolvedValueOnce("");
-    await iosMod.setClipboard("it's a test");
-    const cmd = mockExec.mock.calls[0][0] as string;
-    expect(cmd).toContain("it'\\''s a test");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// getLogs — command construction
-// ---------------------------------------------------------------------------
-describe("getLogs", () => {
-  it("builds log show command with tail", async () => {
-    mockExec.mockResolvedValueOnce("log line");
-    await iosMod.getLogs("sim-1", { lines: 30 });
-    const logCall = mockExec.mock.calls[0][0] as string;
-    expect(logCall).toContain("xcrun simctl spawn sim-1 log show --last 1m --style compact");
-    expect(logCall).toContain("tail -n 30");
-  });
-
-  it("adds subsystem predicate when tag is provided", async () => {
-    mockExec.mockResolvedValueOnce("tagged log");
-    await iosMod.getLogs("sim-1", { tag: "com.apple.UIKit", lines: 10 });
-    const logCall = mockExec.mock.calls[0][0] as string;
-    expect(logCall).toContain('subsystem == "com.apple.UIKit"');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// clearAppData — command construction
-// ---------------------------------------------------------------------------
-describe("clearAppData", () => {
-  it("uses xcrun simctl uninstall for simulators", async () => {
-    // isSimulator check
-    mockExec.mockResolvedValueOnce(
-      JSON.stringify({
-        devices: {
-          "com.apple.CoreSimulator.SimRuntime.iOS-17": [
-            { udid: "sim-1", name: "iPhone", state: "Booted" },
-          ],
-        },
-      })
-    );
-    mockExec.mockResolvedValueOnce(""); // uninstall command
-    await iosMod.clearAppData("sim-1", "com.example.app");
-    const uninstallCall = mockExec.mock.calls[1][0] as string;
-    expect(uninstallCall).toBe(
-      "xcrun simctl uninstall sim-1 com.example.app"
+  it("uses simctl pbcopy with the text piped via stdin", async () => {
+    mockCommands({ idb: false });
+    await iosMod.setClipboard("sim-1", "hello clipboard");
+    expect(mockRun).toHaveBeenCalledWith(
+      "xcrun",
+      ["simctl", "pbcopy", "sim-1"],
+      { stdin: "hello clipboard" },
     );
   });
 
   it("throws for physical devices", async () => {
-    // isSimulator: no match
-    mockExec.mockResolvedValueOnce(
-      JSON.stringify({ devices: {} })
+    mockCommands({ idb: true });
+    await expect(iosMod.setClipboard("physical-1", "text")).rejects.toThrow(
+      /not supported via CLI/
     );
-    await expect(iosMod.clearAppData("physical-1", "com.example.app")).rejects.toThrow(
-      /not possible via CLI/
+  });
+});
+
+describe("getClipboard", () => {
+  it("uses simctl pbpaste for simulators", async () => {
+    mockRun.mockImplementation(async (file, args) => {
+      const cmd = (args as string[]).join(" ");
+      if (cmd.includes("list devices")) return SIMCTL_LIST;
+      if (cmd.includes("pbpaste")) return "copied text";
+      return "";
+    });
+    const text = await iosMod.getClipboard("sim-1");
+    expect(text).toBe("copied text");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getLogs — simulators only
+// ---------------------------------------------------------------------------
+describe("getLogs", () => {
+  it("builds log show via simctl spawn and tails in JS", async () => {
+    const logLines = Array.from({ length: 60 }, (_, i) => `log ${i}`).join("\n");
+    mockRun.mockImplementation(async (file, args) => {
+      const cmd = (args as string[]).join(" ");
+      if (cmd.includes("list devices")) return SIMCTL_LIST;
+      if (cmd.includes("log show")) return logLines;
+      return "";
+    });
+
+    const output = await iosMod.getLogs("sim-1", { lines: 30 });
+    expect(output.split("\n")).toHaveLength(30);
+    expect(output).toContain("log 59");
+
+    const logCall = mockRun.mock.calls.find((c) =>
+      (c[1] as string[]).includes("show"),
+    );
+    expect((logCall![1] as string[]).join(" ")).toContain(
+      "simctl spawn sim-1 log show --last 1m --style compact",
+    );
+  });
+
+  it("adds subsystem predicate when tag is provided", async () => {
+    mockRun.mockImplementation(async (file, args) => {
+      const cmd = (args as string[]).join(" ");
+      if (cmd.includes("list devices")) return SIMCTL_LIST;
+      return "line";
+    });
+    await iosMod.getLogs("sim-1", { tag: "com.apple.UIKit", lines: 10 });
+    const logCall = mockRun.mock.calls.find((c) =>
+      (c[1] as string[]).includes("--predicate"),
+    );
+    expect((logCall![1] as string[]).join(" ")).toContain(
+      'subsystem == "com.apple.UIKit"',
+    );
+  });
+
+  it("throws for physical devices", async () => {
+    mockCommands({ idb: true });
+    await expect(iosMod.getLogs("physical-1", { lines: 10 })).rejects.toThrow(
+      /not supported/
     );
   });
 });
 
 // ---------------------------------------------------------------------------
-// killApp — command construction
+// App lifecycle via simctl
 // ---------------------------------------------------------------------------
+describe("clearAppData", () => {
+  it("uses xcrun simctl uninstall for simulators", async () => {
+    mockCommands({ idb: false });
+    await iosMod.clearAppData("sim-1", "com.example.app");
+    expect(mockRun).toHaveBeenCalledWith(
+      "xcrun",
+      ["simctl", "uninstall", "sim-1", "com.example.app"],
+    );
+  });
+
+  it("throws for physical devices", async () => {
+    mockCommands({ idb: false });
+    await expect(
+      iosMod.clearAppData("physical-1", "com.example.app")
+    ).rejects.toThrow(/not possible via CLI/);
+  });
+});
+
 describe("killApp", () => {
   it("uses xcrun simctl terminate for simulators", async () => {
-    // isSimulator check
-    mockExec.mockResolvedValueOnce(
-      JSON.stringify({
-        devices: {
-          "com.apple.CoreSimulator.SimRuntime.iOS-17": [
-            { udid: "sim-1", name: "iPhone", state: "Booted" },
-          ],
-        },
-      })
-    );
-    mockExec.mockResolvedValueOnce(""); // terminate command
+    mockCommands({ idb: false });
     await iosMod.killApp("sim-1", "com.apple.mobilesafari");
-    const terminateCall = mockExec.mock.calls[1][0] as string;
-    expect(terminateCall).toBe(
-      "xcrun simctl terminate sim-1 com.apple.mobilesafari"
+    expect(mockRun).toHaveBeenCalledWith(
+      "xcrun",
+      ["simctl", "terminate", "sim-1", "com.apple.mobilesafari"],
+    );
+  });
+});
+
+describe("installApp / uninstallApp", () => {
+  it("installs via simctl on simulators", async () => {
+    mockCommands({ idb: false });
+    await iosMod.installApp("sim-1", "/tmp/MyApp.app");
+    expect(mockRun).toHaveBeenCalledWith(
+      "xcrun",
+      ["simctl", "install", "sim-1", "/tmp/MyApp.app"],
+      { timeout: 120_000 },
+    );
+  });
+
+  it("uninstalls via simctl on simulators", async () => {
+    mockCommands({ idb: false });
+    await iosMod.uninstallApp("sim-1", "com.example.app");
+    expect(mockRun).toHaveBeenCalledWith(
+      "xcrun",
+      ["simctl", "uninstall", "sim-1", "com.example.app"],
+      { timeout: 60_000 },
+    );
+  });
+});
+
+describe("getAppInfo", () => {
+  it("parses CFBundle versions from simctl listapps", async () => {
+    mockRun.mockImplementation(async (file, args) => {
+      const cmd = (args as string[]).join(" ");
+      if (cmd.includes("list devices")) return SIMCTL_LIST;
+      if (cmd.includes("listapps")) {
+        return `{
+    "com.example.app" = {
+        ApplicationType = User;
+        CFBundleShortVersionString = "2.5.0";
+        CFBundleVersion = "250";
+    };
+}`;
+      }
+      return "";
+    });
+    const info = await iosMod.getAppInfo("sim-1", "com.example.app");
+    expect(info).toEqual({
+      installed: true,
+      version_name: "2.5.0",
+      version_code: "250",
+    });
+  });
+
+  it("reports not installed when the bundle is absent", async () => {
+    mockRun.mockImplementation(async (file, args) => {
+      const cmd = (args as string[]).join(" ");
+      if (cmd.includes("list devices")) return SIMCTL_LIST;
+      return "{}";
+    });
+    const info = await iosMod.getAppInfo("sim-1", "com.example.app");
+    expect(info).toEqual({ installed: false });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// location / appearance / foreground app
+// ---------------------------------------------------------------------------
+describe("setLocation", () => {
+  it("uses simctl location set with lat,lng", async () => {
+    mockCommands({ idb: false });
+    await iosMod.setLocation("sim-1", -34.6037, -58.3816);
+    expect(mockRun).toHaveBeenCalledWith(
+      "xcrun",
+      ["simctl", "location", "sim-1", "set", "-34.6037,-58.3816"],
+    );
+  });
+});
+
+describe("setAppearance", () => {
+  it("uses simctl ui appearance for simulators", async () => {
+    mockCommands({ idb: false });
+    await iosMod.setAppearance("sim-1", "dark");
+    expect(mockRun).toHaveBeenCalledWith(
+      "xcrun",
+      ["simctl", "ui", "sim-1", "appearance", "dark"],
+    );
+  });
+
+  it("throws for physical devices", async () => {
+    mockCommands({ idb: false });
+    await expect(iosMod.setAppearance("physical-1", "dark")).rejects.toThrow(
+      /not supported via CLI/
+    );
+  });
+});
+
+describe("getForegroundApp", () => {
+  it("is not supported on iOS", async () => {
+    await expect(iosMod.getForegroundApp("sim-1")).rejects.toThrow(
+      /not supported on iOS/
     );
   });
 });
 
 // ---------------------------------------------------------------------------
-// pressKey — key mapping
+// pressKey
 // ---------------------------------------------------------------------------
 describe("pressKey", () => {
   it("throws for unknown keys", async () => {
+    mockCommands({ idb: true });
     await expect(iosMod.pressKey("nonexistent", "sim-1")).rejects.toThrow(
       /Unknown key: nonexistent/
     );
   });
 
   it("throws when numeric keycode is used without a named key on iOS", async () => {
+    mockCommands({ idb: true });
     await expect(iosMod.pressKey(undefined, "sim-1", 120)).rejects.toThrow(
       /Numeric keycode is not supported on iOS/
     );
   });
-});
 
-// ---------------------------------------------------------------------------
-// typeText — command construction for simulators (no idb)
-// ---------------------------------------------------------------------------
-describe("typeText", () => {
-  it("uses xcrun simctl io type when idb is unavailable (simulator)", async () => {
-    // hasIdb: "which idb" fails
-    mockExec.mockRejectedValueOnce(new Error("not found"));
-    // xcrun simctl io type
-    mockExec.mockResolvedValueOnce("");
-
-    await iosMod.typeText("hello", "sim-1");
-    const typeCall = mockExec.mock.calls[1][0] as string;
-    expect(typeCall).toBe("xcrun simctl io sim-1 type 'hello'");
-  });
-
-  it("escapes single quotes in text for simctl", async () => {
-    mockExec.mockRejectedValueOnce(new Error("not found"));
-    mockExec.mockResolvedValueOnce("");
-
-    await iosMod.typeText("it's fine", "sim-1");
-    const typeCall = mockExec.mock.calls[1][0] as string;
-    expect(typeCall).toContain("it'\\''s fine");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// launchApp — command construction
-// ---------------------------------------------------------------------------
-describe("launchApp", () => {
-  it("uses xcrun simctl launch for simulators", async () => {
-    // isSimulator: xcrun simctl list devices --json returns matching udid
-    mockExec.mockResolvedValueOnce(
-      JSON.stringify({
-        devices: {
-          "com.apple.CoreSimulator.SimRuntime.iOS-17": [
-            { udid: "sim-1", name: "iPhone", state: "Booted" },
-          ],
-        },
-      })
-    );
-    mockExec.mockResolvedValueOnce(""); // launch command
-
-    await iosMod.launchApp("com.apple.mobilesafari", "sim-1");
-    const launchCall = mockExec.mock.calls[1][0] as string;
-    expect(launchCall).toBe(
-      "xcrun simctl launch sim-1 com.apple.mobilesafari"
-    );
-  });
-});
-
-// ---------------------------------------------------------------------------
-// openUrl — command construction
-// ---------------------------------------------------------------------------
-describe("openUrl", () => {
-  it("uses xcrun simctl openurl for simulators", async () => {
-    mockExec.mockResolvedValueOnce(
-      JSON.stringify({
-        devices: {
-          "com.apple.CoreSimulator.SimRuntime.iOS-17": [
-            { udid: "sim-1", name: "iPhone", state: "Booted" },
-          ],
-        },
-      })
-    );
-    mockExec.mockResolvedValueOnce("");
-
-    await iosMod.openUrl("https://apple.com", "sim-1");
-    const urlCall = mockExec.mock.calls[1][0] as string;
-    expect(urlCall).toBe('xcrun simctl openurl sim-1 "https://apple.com"');
+  it("presses a key N times when repeat is given", async () => {
+    mockCommands({ idb: true });
+    await iosMod.pressKey("delete", "sim-1", undefined, 3);
+    const keyCalls = mockRun.mock.calls.filter((c) => c[0] === "idb");
+    expect(keyCalls).toHaveLength(3);
+    expect(keyCalls[0][1]).toEqual(["ui", "key", "--udid", "sim-1", "42"]);
   });
 });

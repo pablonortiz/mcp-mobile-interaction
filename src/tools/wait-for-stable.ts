@@ -1,10 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { getDriver } from "../platforms/driver.js";
 import { waitForStableUiTree } from "../utils/observe.js";
 import { filterUiElements } from "../utils/ui-filter.js";
-import * as android from "../platforms/android.js";
-import * as ios from "../platforms/ios.js";
+import { formatUiTree } from "../utils/format-ui.js";
 import { compressScreenshot } from "../utils/image.js";
+import { READ_ONLY } from "../utils/annotations.js";
 
 export function registerWaitForStableTool(server: McpServer) {
   server.tool(
@@ -35,6 +36,7 @@ export function registerWaitForStableTool(server: McpServer) {
         .optional()
         .describe("Filter UI tree to relevant elements only. Default: true"),
     },
+    READ_ONLY,
     async ({
       platform,
       device_id,
@@ -58,15 +60,12 @@ export function registerWaitForStableTool(server: McpServer) {
       > = [
         {
           type: "text" as const,
-          text: `Screen stabilized (${filtered.length} elements):\n${JSON.stringify(filtered, null, 2)}`,
+          text: `Screen stabilized. ${formatUiTree(filtered, "UI tree")}`,
         },
       ];
 
       if (include_screenshot) {
-        const buffer =
-          platform === "android"
-            ? await android.screenshot(device_id)
-            : await ios.screenshot(device_id);
+        const buffer = await getDriver(platform).screenshot(device_id);
         const { base64, width, height } = await compressScreenshot(buffer);
         content.push({
           type: "image" as const,

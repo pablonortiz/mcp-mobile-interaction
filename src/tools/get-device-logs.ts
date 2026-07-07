@@ -1,12 +1,12 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as android from "../platforms/android.js";
-import * as ios from "../platforms/ios.js";
+import { getDriver } from "../platforms/driver.js";
 
 export function registerGetDeviceLogsTool(server: McpServer) {
   server.tool(
     "get_device_logs",
-    "Get OS-level device logs. Android: logcat. iOS: log show. Captures native logs (crashes, ANRs, system events, SDK logs) — different from JavaScript console logs.",
+    "Get OS-level device logs. Android: logcat. iOS: log show (simulators only). Captures native logs (crashes, ANRs, system events, SDK logs) — different from JavaScript console logs.",
     {
       platform: z.enum(["android", "ios"]).describe("Target platform"),
       device_id: z
@@ -35,13 +35,11 @@ export function registerGetDeviceLogsTool(server: McpServer) {
       clear: z
         .boolean()
         .optional()
-        .describe("Clear the log buffer before reading. Useful to capture only new logs from this point forward. Default: false"),
+        .describe("Clear the log buffer before reading (Android only). Useful to capture only new logs from this point forward. Default: false"),
     },
     async ({ platform, device_id, tag, search, level, lines, clear }) => {
-      const deviceId = device_id ??
-        (platform === "android"
-          ? await android.getFirstDeviceId()
-          : await ios.getFirstDeviceId());
+      const driver = getDriver(platform);
+      const deviceId = device_id ?? (await driver.getFirstDeviceId());
 
       let clearWarning: string | undefined;
 
@@ -52,11 +50,9 @@ export function registerGetDeviceLogsTool(server: McpServer) {
           } catch {
             clearWarning = "Warning: Failed to clear log buffer (this can happen on some emulators due to permission restrictions). Continuing with log read.";
           }
-        } else {
-          // iOS doesn't support clearing logs programmatically
         }
 
-        if (!tag && !search && !clearWarning) {
+        if (!tag && !search && !clearWarning && platform === "android") {
           return {
             content: [{
               type: "text" as const,
@@ -66,13 +62,7 @@ export function registerGetDeviceLogsTool(server: McpServer) {
         }
       }
 
-      let logOutput: string;
-
-      if (platform === "android") {
-        logOutput = await android.getLogs(deviceId, { tag, level, lines });
-      } else {
-        logOutput = await ios.getLogs(deviceId, { tag, level, lines });
-      }
+      let logOutput = await driver.getLogs(deviceId, { tag, level, lines });
 
       // Apply search filter
       if (search) {

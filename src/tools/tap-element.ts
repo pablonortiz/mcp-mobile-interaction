@@ -1,39 +1,26 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import * as android from "../platforms/android.js";
-import * as ios from "../platforms/ios.js";
+import { getDriver } from "../platforms/driver.js";
 import type { UiElement } from "../types.js";
 import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
 import { matchElement, describeCriteria, type MatchCriteria } from "../utils/element-matcher.js";
+import { scrollOnce } from "../utils/scroll.js";
+import { ACTION } from "../utils/annotations.js";
 
-function getUiTree(platform: string, deviceId?: string) {
-  return platform === "android"
-    ? android.getUiTree(deviceId)
-    : ios.getUiTree(deviceId);
-}
-
-function tap(platform: string, x: number, y: number, deviceId?: string) {
-  return platform === "android"
-    ? android.tap(x, y, deviceId)
-    : ios.tap(x, y, deviceId);
-}
-
-async function swipeDown(platform: string, deviceId?: string) {
-  const screenInfo =
-    platform === "android"
-      ? await android.getScreenInfo(deviceId)
-      : await ios.getScreenInfo(deviceId);
-
-  const cx = Math.round(screenInfo.width / 2);
-  const cy = Math.round(screenInfo.height / 2);
-  const dist = Math.round(screenInfo.height * 0.3);
-
-  if (platform === "android") {
-    await android.swipe(cx, cy + dist, cx, cy - dist, 300, deviceId);
-  } else {
-    await ios.swipe(cx, cy + dist, cx, cy - dist, 300, deviceId);
-  }
+function findCoveringOverlay(
+  tree: UiElement[],
+  target: UiElement,
+): UiElement | undefined {
+  return tree.find(
+    (el) =>
+      el !== target &&
+      el.is_overlay &&
+      target.center_x >= el.bounds.x &&
+      target.center_x <= el.bounds.x + el.bounds.width &&
+      target.center_y >= el.bounds.y &&
+      target.center_y <= el.bounds.y + el.bounds.height,
+  );
 }
 
 export function registerTapElementTool(server: McpServer) {
@@ -70,7 +57,11 @@ export function registerTapElementTool(server: McpServer) {
       scroll_to_find: z
         .boolean()
         .optional()
-        .describe("If true, scroll down iteratively to find the element before tapping. Default: false"),
+        .describe("If true, scroll iteratively to find the element before tapping. Default: false"),
+      scroll_direction: z
+        .enum(["down", "up"])
+        .optional()
+        .describe("Direction to scroll the content when scroll_to_find is true. Default: down"),
       max_scrolls: z
         .number()
         .int()
@@ -95,6 +86,7 @@ export function registerTapElementTool(server: McpServer) {
         .optional()
         .describe("If true, wait for UI to stabilize after tap. Default: false"),
     },
+    ACTION,
     async ({
       platform,
       device_id,
@@ -104,6 +96,7 @@ export function registerTapElementTool(server: McpServer) {
       index: matchIndex,
       wait_for,
       scroll_to_find,
+      scroll_direction,
       max_scrolls,
       timeout_ms,
       observe,
@@ -124,23 +117,24 @@ export function registerTapElementTool(server: McpServer) {
         };
       }
 
+      const driver = getDriver(platform);
       const targetIndex = matchIndex ?? 0;
       const timeout = timeout_ms ?? 10_000;
 
       let target: UiElement | undefined;
+      let lastTree: UiElement[] = [];
 
       if (scroll_to_find) {
-        // Scroll down iteratively to find element
         const scrollLimit = max_scrolls ?? 5;
         for (let i = 0; i <= scrollLimit; i++) {
-          const tree = await getUiTree(platform, device_id);
-          const matches = tree.filter((el) => matchElement(el, criteria));
+          lastTree = await driver.getUiTree(device_id);
+          const matches = lastTree.filter((el) => matchElement(el, criteria));
           if (matches.length > targetIndex) {
             target = matches[targetIndex];
             break;
           }
           if (i < scrollLimit) {
-            await swipeDown(platform, device_id);
+            await scrollOnce(platform, scroll_direction ?? "down", device_id);
             await new Promise((resolve) => setTimeout(resolve, 500));
           }
         }
@@ -157,11 +151,10 @@ export function registerTapElementTool(server: McpServer) {
           };
         }
       } else if (wait_for) {
-        // Poll until element appears
         const start = Date.now();
         while (Date.now() - start < timeout) {
-          const tree = await getUiTree(platform, device_id);
-          const matches = tree.filter((el) => matchElement(el, criteria));
+          lastTree = await driver.getUiTree(device_id);
+          const matches = lastTree.filter((el) => matchElement(el, criteria));
           if (matches.length > targetIndex) {
             target = matches[targetIndex];
             break;
@@ -181,15 +174,14 @@ export function registerTapElementTool(server: McpServer) {
           };
         }
       } else {
-        // Single attempt
-        const tree = await getUiTree(platform, device_id);
-        const matches = tree.filter((el) => matchElement(el, criteria));
+        lastTree = await driver.getUiTree(device_id);
+        const matches = lastTree.filter((el) => matchElement(el, criteria));
         if (matches.length === 0) {
           return {
             content: [
               {
                 type: "text" as const,
-                text: `Element not found (${describeCriteria(criteria)}). ${tree.length} elements on screen.`,
+                text: `Element not found (${describeCriteria(criteria)}). ${lastTree.length} elements on screen.`,
               },
             ],
             isError: true,
@@ -209,8 +201,21 @@ export function registerTapElementTool(server: McpServer) {
         target = matches[targetIndex];
       }
 
+      const warnings: string[] = [];
+      if (target.enabled === false) {
+        warnings.push(
+          "Warning: the element is disabled (enabled=false) — the tap may have no effect.",
+        );
+      }
+      const overlay = findCoveringOverlay(lastTree, target);
+      if (overlay && !target.is_overlay) {
+        warnings.push(
+          `Warning: an overlay/scrim (${overlay.resource_id ?? "unnamed"}) covers this element — the tap may hit the overlay instead. Dismiss it first if the tap has no effect.`,
+        );
+      }
+
       // Tap the element's center
-      await tap(platform, target.center_x, target.center_y, device_id);
+      await driver.tap(target.center_x, target.center_y, device_id);
 
       const observation = await performObservation({
         mode: observe ?? "none",
@@ -221,11 +226,13 @@ export function registerTapElementTool(server: McpServer) {
       });
 
       const label = target.text || target.resource_id || target.type;
+      const confirmation = [
+        `Tapped element "${label}" (${target.type}) at (${target.center_x}, ${target.center_y}) on ${platform} device`,
+        ...warnings,
+      ].join("\n");
+
       return {
-        content: buildResponseContent(
-          `Tapped element "${label}" (${target.type}) at (${target.center_x}, ${target.center_y}) on ${platform} device`,
-          observation,
-        ),
+        content: buildResponseContent(confirmation, observation),
       };
     },
   );

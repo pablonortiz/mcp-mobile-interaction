@@ -3,34 +3,31 @@ import { z } from "zod";
 import { getDriver } from "../platforms/driver.js";
 import { ACTION } from "../utils/annotations.js";
 
-export function registerSetClipboardTool(server: McpServer) {
+export function registerInstallAppTool(server: McpServer) {
   server.tool(
-    "set_clipboard",
-    "Set the device clipboard content. Useful for testing paste of URLs, tokens, OTP codes, etc. On iOS this targets the simulator's own pasteboard (not the host Mac's).",
+    "install_app",
+    "Install an app on the device. Android: local .apk path (installed with -r, replacing an existing install). iOS: .app bundle (simulator) or .ipa (physical device via idb).",
     {
       platform: z.enum(["android", "ios"]).describe("Target platform"),
       device_id: z
         .string()
         .optional()
         .describe("Device ID. Omit to use the first connected device."),
-      text: z
+      path: z
         .string()
-        .max(10000)
-        .describe("Text to set in the clipboard (max 10,000 characters)"),
+        .describe("Local path to the .apk (Android), .app bundle or .ipa (iOS)"),
     },
     ACTION,
-    async ({ platform, device_id, text }) => {
+    async ({ platform, device_id, path }) => {
       const driver = getDriver(platform);
       const deviceId = device_id ?? (await driver.getFirstDeviceId());
 
-      await driver.setClipboard(deviceId, text);
-
-      const preview = text.length > 80 ? text.slice(0, 80) + "..." : text;
+      const output = await driver.installApp(deviceId, path);
 
       return {
         content: [{
           type: "text" as const,
-          text: `Clipboard set on ${platform} device ${deviceId}: "${preview}"`,
+          text: `Installed on ${platform} device ${deviceId}: ${path}\n${output}`,
         }],
       };
     },

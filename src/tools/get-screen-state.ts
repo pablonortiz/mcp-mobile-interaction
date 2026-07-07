@@ -1,9 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import * as android from "../platforms/android.js";
-import * as ios from "../platforms/ios.js";
+import { getDriver } from "../platforms/driver.js";
 import { compressScreenshot } from "../utils/image.js";
 import { filterUiElements } from "../utils/ui-filter.js";
+import { formatUiTree } from "../utils/format-ui.js";
+import { READ_ONLY } from "../utils/annotations.js";
 
 export function registerGetScreenStateTool(server: McpServer) {
   server.tool(
@@ -23,24 +24,25 @@ export function registerGetScreenStateTool(server: McpServer) {
         .boolean()
         .optional()
         .describe("Filter UI tree to relevant elements only (with text or clickable). Default: true"),
+      max_elements: z
+        .number()
+        .int()
+        .min(1)
+        .max(500)
+        .optional()
+        .describe("Maximum elements to return; the rest is summarized. Default: 120"),
     },
-    async ({ platform, device_id, include, filter_ui }) => {
+    READ_ONLY,
+    async ({ platform, device_id, include, filter_ui, max_elements }) => {
+      const driver = getDriver(platform);
       const mode = include ?? "both";
       const wantTree = mode === "ui_tree" || mode === "both";
       const wantScreenshot = mode === "screenshot" || mode === "both";
 
       // Capture in parallel
       const [tree, screenshotBuffer] = await Promise.all([
-        wantTree
-          ? platform === "android"
-            ? android.getUiTree(device_id)
-            : ios.getUiTree(device_id)
-          : undefined,
-        wantScreenshot
-          ? platform === "android"
-            ? android.screenshot(device_id)
-            : ios.screenshot(device_id)
-          : undefined,
+        wantTree ? driver.getUiTree(device_id) : undefined,
+        wantScreenshot ? driver.screenshot(device_id) : undefined,
       ]);
 
       const content: Array<
@@ -52,7 +54,7 @@ export function registerGetScreenStateTool(server: McpServer) {
         const filtered = filterUiElements(tree, !(filter_ui ?? true));
         content.push({
           type: "text" as const,
-          text: `UI Tree (${filtered.length} elements):\n${JSON.stringify(filtered, null, 2)}`,
+          text: formatUiTree(filtered, "UI tree", max_elements),
         });
       }
 

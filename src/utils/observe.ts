@@ -1,6 +1,5 @@
 import type { Platform, UiElement } from "../types.js";
-import * as android from "../platforms/android.js";
-import * as ios from "../platforms/ios.js";
+import { getDriver } from "../platforms/driver.js";
 import { compressScreenshot } from "./image.js";
 import { filterUiElements } from "./ui-filter.js";
 import type { ObservationResult } from "./format-response.js";
@@ -39,6 +38,7 @@ export async function performObservation(
   }
 
   const result: ObservationResult = {};
+  const driver = getDriver(options.platform);
 
   const wantTree = options.mode === "ui_tree" || options.mode === "both";
   const wantScreenshot =
@@ -46,10 +46,8 @@ export async function performObservation(
 
   // Capture in parallel when both are needed
   const [tree, screenshot] = await Promise.all([
-    wantTree ? getUiTree(options.platform, options.deviceId) : undefined,
-    wantScreenshot
-      ? getScreenshot(options.platform, options.deviceId)
-      : undefined,
+    wantTree ? driver.getUiTree(options.deviceId) : undefined,
+    wantScreenshot ? getScreenshot(options.platform, options.deviceId) : undefined,
   ]);
 
   if (tree) {
@@ -73,12 +71,13 @@ export async function waitForStableUiTree(
   pollIntervalMs = 500,
   timeoutMs = 10_000,
 ): Promise<UiElement[]> {
+  const driver = getDriver(platform);
   const start = Date.now();
   let previousHash = "";
   let previousTree: UiElement[] = [];
 
   while (Date.now() - start < timeoutMs) {
-    const tree = await getUiTree(platform, deviceId);
+    const tree = await driver.getUiTree(deviceId);
     const hash = hashUiTree(tree);
 
     if (hash === previousHash && previousHash !== "") {
@@ -113,24 +112,18 @@ function hashUiTree(elements: UiElement[]): string {
     .join("\n");
 }
 
-async function getUiTree(
-  platform: Platform,
-  deviceId?: string,
-): Promise<UiElement[]> {
-  return platform === "android"
-    ? android.getUiTree(deviceId)
-    : ios.getUiTree(deviceId);
-}
-
 async function getScreenshot(
   platform: Platform,
   deviceId?: string,
-): Promise<{ base64: string; width: number; height: number; nativeWidth: number; nativeHeight: number; scale: number }> {
-  const buffer =
-    platform === "android"
-      ? await android.screenshot(deviceId)
-      : await ios.screenshot(deviceId);
-
+): Promise<{
+  base64: string;
+  width: number;
+  height: number;
+  nativeWidth: number;
+  nativeHeight: number;
+  scale: number;
+}> {
+  const buffer = await getDriver(platform).screenshot(deviceId);
   return compressScreenshot(buffer, { quality: 50, scale: 0.5 });
 }
 

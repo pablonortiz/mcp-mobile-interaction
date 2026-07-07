@@ -11,7 +11,7 @@ describe("buildResponseContent", () => {
     expect(result).toEqual([{ type: "text", text: "Tapped at (100, 200)" }]);
   });
 
-  it("appends UI tree text when observation includes uiTree", () => {
+  it("appends compact UI tree text when observation includes uiTree", () => {
     const observation: ObservationResult = {
       uiTree: [
         {
@@ -28,11 +28,9 @@ describe("buildResponseContent", () => {
     const result = buildResponseContent("Done", observation);
     expect(result).toHaveLength(2);
     expect(result[0]).toEqual({ type: "text", text: "Done" });
-    expect(result[1].type).toBe("text");
-    expect((result[1] as { type: "text"; text: string }).text).toContain(
-      "--- UI Tree (1 elements) ---"
-    );
-    expect((result[1] as { type: "text"; text: string }).text).toContain('"OK"');
+    const treeText = (result[1] as { type: "text"; text: string }).text;
+    expect(treeText).toContain("UI tree (1;");
+    expect(treeText).toContain('[0] Button "OK" @(60,45) 100x50 clickable');
   });
 
   it("appends screenshot image and dimension text when observation includes screenshot", () => {
@@ -84,7 +82,7 @@ describe("buildResponseContent", () => {
     const result = buildResponseContent("Done", observation);
     expect(result).toHaveLength(2);
     expect((result[1] as { type: "text"; text: string }).text).toContain(
-      "--- UI Tree (0 elements) ---"
+      "UI tree (0;"
     );
   });
 });

@@ -1,9 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import * as android from "../platforms/android.js";
-import * as ios from "../platforms/ios.js";
+import { getDriver } from "../platforms/driver.js";
 import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
+import { ACTION } from "../utils/annotations.js";
 
 export function registerLongPressTool(server: McpServer) {
   server.tool(
@@ -33,9 +33,7 @@ export function registerLongPressTool(server: McpServer) {
       observe: z
         .enum(["none", "ui_tree", "screenshot", "both"])
         .optional()
-        .describe(
-          "Capture screen state after action. Default: none",
-        ),
+        .describe("Capture screen state after action. Default: none"),
       observe_delay_ms: z
         .number()
         .int()
@@ -44,20 +42,15 @@ export function registerLongPressTool(server: McpServer) {
       observe_stabilize: z
         .boolean()
         .optional()
-        .describe(
-          "If true, wait for UI to stabilize instead of fixed delay. Default: false",
-        ),
+        .describe("If true, wait for UI to stabilize instead of fixed delay. Default: false"),
     },
+    ACTION,
     async ({ platform, device_id, x, y, screenshot_scale, duration_ms, observe, observe_delay_ms, observe_stabilize }) => {
       const duration = duration_ms ?? 1000;
       const nativeX = screenshot_scale ? Math.round(x / screenshot_scale) : Math.round(x);
       const nativeY = screenshot_scale ? Math.round(y / screenshot_scale) : Math.round(y);
 
-      if (platform === "android") {
-        await android.longPress(nativeX, nativeY, duration, device_id);
-      } else {
-        await ios.longPress(nativeX, nativeY, duration, device_id);
-      }
+      await getDriver(platform).longPress(nativeX, nativeY, duration, device_id);
 
       const observation = await performObservation({
         mode: observe ?? "none",

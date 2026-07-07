@@ -26,10 +26,21 @@ import { registerKillAppTool } from "./tools/kill-app.js";
 import { registerClearAppDataTool } from "./tools/clear-app-data.js";
 import { registerGetDeviceLogsTool } from "./tools/get-device-logs.js";
 import { registerSetClipboardTool } from "./tools/set-clipboard.js";
+import { registerGetClipboardTool } from "./tools/get-clipboard.js";
+import { registerInstallAppTool } from "./tools/install-app.js";
+import { registerUninstallAppTool } from "./tools/uninstall-app.js";
+import { registerGetAppInfoTool } from "./tools/get-app-info.js";
+import { registerGetCurrentAppTool } from "./tools/get-current-app.js";
+import { registerSetLocationTool } from "./tools/set-location.js";
+import { registerRecordScreenTool } from "./tools/record-screen.js";
+import { registerSetAppearanceTool } from "./tools/set-appearance.js";
+import { registerRotateDeviceTool } from "./tools/rotate-device.js";
+import { registerClearTextTool } from "./tools/clear-text.js";
+import { registerDoctorTool } from "./tools/doctor.js";
 
 const server = new McpServer({
   name: "mcp-mobile-interaction",
-  version: "1.3.1",
+  version: "1.4.0",
 });
 
 registerListDevicesTool(server);
@@ -55,6 +66,17 @@ registerKillAppTool(server);
 registerClearAppDataTool(server);
 registerGetDeviceLogsTool(server);
 registerSetClipboardTool(server);
+registerGetClipboardTool(server);
+registerInstallAppTool(server);
+registerUninstallAppTool(server);
+registerGetAppInfoTool(server);
+registerGetCurrentAppTool(server);
+registerSetLocationTool(server);
+registerRecordScreenTool(server);
+registerSetAppearanceTool(server);
+registerRotateDeviceTool(server);
+registerClearTextTool(server);
+registerDoctorTool(server);
 
 async function main() {
   const transport = new StdioServerTransport();

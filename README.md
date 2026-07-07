@@ -5,7 +5,7 @@
 [![npm downloads](https://img.shields.io/npm/dm/mcp-mobile-interaction?style=flat-square&color=CB3837)](https://www.npmjs.com/package/mcp-mobile-interaction)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
 
-An MCP (Model Context Protocol) server that lets Claude interact with Android and iOS devices/emulators. Take screenshots, tap, swipe, type, inspect UI elements, and more — no Appium required.
+An MCP (Model Context Protocol) server that lets Claude interact with Android and iOS devices/emulators. Take screenshots, tap, swipe, type, inspect UI elements, mock GPS, record the screen, and more — no Appium required.
 
 ## Prerequisites
 
@@ -14,9 +14,10 @@ An MCP (Model Context Protocol) server that lets Claude interact with Android an
 - An Android emulator running or a physical device connected via USB with ADB debugging enabled
 
 ### iOS
-- macOS with [Xcode](https://developer.apple.com/xcode/) installed (provides `xcrun simctl`)
-- For physical devices: [idb](https://fbidb.io/) (`brew install idb-companion && pip install fb-idb`)
-- A booted iOS simulator or connected physical device
+- macOS with [Xcode](https://developer.apple.com/xcode/) installed (provides `xcrun simctl`) — covers screenshots, app lifecycle, clipboard, location, appearance and recording on **simulators**
+- [idb](https://fbidb.io/) (`brew install idb-companion && pip install fb-idb`) — **required for all UI interaction** (tap, swipe, type, key presses, UI tree) on simulators AND physical devices. `xcrun simctl` has no UI interaction commands.
+
+Run the `doctor` tool to diagnose your setup.
 
 ## Installation
 
@@ -62,45 +63,65 @@ npm install -g mcp-mobile-interaction
 
 ## Tools
 
-All tools accept a `platform` parameter (`"android"` or `"ios"`) and an optional `device_id` (defaults to the first connected device).
+All tools accept a `platform` parameter (`"android"` or `"ios"`) and an optional `device_id` (defaults to the first connected device). Read-only tools are annotated with `readOnlyHint` so MCP hosts can auto-approve them.
 
-### Core Tools
+### Inspection Tools
 
 | Tool | Description |
 |------|-------------|
 | `list_devices` | List connected devices and emulators/simulators |
-| `screenshot` | Capture a screenshot (returns base64 JPEG) |
-| `get_ui_tree` | Get a flat list of UI elements with optional filters (`only_clickable`, `only_with_text`, `type_filter`, `resource_id_contains`) |
-| `get_screen_info` | Get screen dimensions, density, and orientation |
-| `get_screen_state` | Get UI tree + screenshot in a single call (saves a round-trip) |
+| `screenshot` | Capture a screenshot (base64 JPEG). Supports cropping to a single element (`crop_resource_id` / `crop_text`) for token-efficient component checks |
+| `get_ui_tree` | Compact flat list of UI elements with optional filters (`only_clickable`, `only_with_text`, `type_filter`, `resource_id_contains`, `max_elements`) |
+| `get_screen_info` | Screen dimensions, density, and orientation (rotation-aware on Android) |
+| `get_screen_state` | UI tree + screenshot in a single call (saves a round-trip) |
+| `find_element` | Find elements by text/resource_id/type without tapping. For assertions. Supports `scroll_to_find` |
+| `get_current_app` | Foreground app package + activity (Android). For asserting navigation/deep links |
+| `get_app_info` | Whether an app is installed + its version |
+| `get_device_logs` | OS-level logs (Android logcat / iOS log show on simulators). Filter by tag, level, or search string |
+| `get_clipboard` | Read the device clipboard (verify copy-to-clipboard features) |
+| `doctor` | Diagnose local tooling: adb, ANDROID_HOME, devices, emulator, simctl, idb |
 
 ### Action Tools
 
 | Tool | Description |
 |------|-------------|
-| `tap` | Tap at (x, y) coordinates (native resolution) |
-| `double_tap` | Double-tap at (x, y) coordinates (native resolution) |
-| `long_press` | Long-press at (x, y) with configurable duration |
+| `tap` / `double_tap` / `long_press` | Touch at (x, y) coordinates (native resolution) |
 | `swipe` | Swipe between coordinates or by direction (up/down/left/right) |
-| `type_text` | Type text into the focused input field |
-| `press_key` | Press a key (home, back, enter, delete, volume_up, volume_down, power, tab, recent_apps, menu, escape, search, camera, media_play_pause) or send a raw Android keycode |
-| `launch_app` | Launch an app by package name / bundle ID |
-| `open_url` | Open a URL or deep link |
-| `tap_element` | Find element by text, resource_id, or type and tap it. Supports `scroll_to_find` and `wait_for` |
-| `set_network_state` | Control device network connectivity: Wi-Fi, mobile data, airplane mode (Android only) |
-| `find_element` | Find UI elements by text, resource_id, or type without tapping. Returns element details for assertions. Supports `scroll_to_find` |
-| `kill_app` | Force-stop an application by package name (Android) or bundle ID (iOS) |
-| `clear_app_data` | Clear app data. Mode `cache` clears temp files only; mode `all` resets to fresh install state |
-| `get_device_logs` | Get OS-level device logs (Android logcat / iOS log show). Filter by tag, level, or search string |
-| `set_clipboard` | Set the device clipboard content. Useful for testing paste of URLs, tokens, OTP codes |
+| `tap_element` | Find element by text/resource_id/type and tap it. Supports `scroll_to_find` (+`scroll_direction`) and `wait_for`. Warns when the target is disabled or covered by an overlay |
+| `type_text` | Type into the focused input. Full Unicode: non-ASCII text (á, ñ, emoji) is delivered via clipboard paste on Android — `adb input text` silently drops it |
+| `clear_text` | Clear the focused text field (reads its length from the UI tree on Android) |
+| `press_key` | Press a named key (incl. `paste`) or raw Android keycode, with `repeat` support |
+| `launch_app` / `kill_app` | Start / force-stop an app |
+| `install_app` / `uninstall_app` | Install a local .apk / .app / .ipa, or remove an app |
+| `open_url` | Open a URL or deep link (query params with `&` are quoted correctly) |
+| `clear_app_data` | Mode `cache` clears temp files only; mode `all` resets to fresh install |
+| `set_clipboard` | Set the device clipboard (targets the simulator pasteboard on iOS, not the host Mac) |
+| `set_location` | Mock GPS coordinates (Android emulator / iOS simulator+idb). For delivery/route flows |
+| `set_network_state` | Wi-Fi, mobile data, airplane mode, and emulator latency/speed throttling (Android) |
+| `set_appearance` | Switch dark/light mode |
+| `rotate_device` | Rotate to a fixed orientation (Android) |
+| `record_screen` | Start/stop an mp4 screen recording — bug repro evidence |
 
 ### Waiting Tools
 
 | Tool | Description |
 |------|-------------|
-| `wait_for_element` | Poll until an element matching text/type/resource_id criteria appears on screen |
-| `wait_for_element_gone` | Poll until a matching element disappears (loading spinners, skeletons, dialogs) |
+| `wait_for_element` | Poll until an element matching text/type/resource_id criteria appears |
+| `wait_for_element_gone` | Poll until a matching element disappears (spinners, skeletons, dialogs) |
 | `wait_for_stable` | Poll until the screen stops changing (two consecutive UI snapshots match) |
+
+## UI Tree Format
+
+UI trees are returned in a compact one-line-per-element format (~4x fewer tokens than JSON):
+
+```
+UI tree (12; format: [n] Type "text" @(center_x,center_y) WxH #resource_id flags):
+[0] TextView "Settings" @(270,125) 540x50 #title clickable
+[1] EditText "" @(540,300) 900x120 #search_input focused
+[2] Button "Save" @(540,960) 300x90 #save_btn disabled
+```
+
+Flags: `clickable`, `disabled`, `focused`, `overlay` (an element that looks like a modal scrim). Output is capped (default 120 elements) with a summary line pointing to the filters.
 
 ## Coordinate System
 
@@ -128,7 +149,7 @@ The `screenshot_scale` parameter is available on `tap`, `double_tap`, `long_pres
 
 ## Observe Mode
 
-All 8 action tools (`tap`, `double_tap`, `long_press`, `swipe`, `type_text`, `press_key`, `launch_app`, `open_url`) support optional **observe** parameters that capture the screen state after the action completes — returning the result in a single round-trip instead of two:
+Action tools (`tap`, `double_tap`, `long_press`, `swipe`, `type_text`, `press_key`, `launch_app`, `open_url`, `tap_element`, `clear_text`) support optional **observe** parameters that capture the screen state after the action completes — returning the result in a single round-trip instead of two:
 
 | Parameter | Description |
 |-----------|-------------|
@@ -158,57 +179,62 @@ For a 5-step test flow, this cuts round-trips roughly in half.
 "Take a screenshot of my Android emulator"
 ```
 
-Claude will call `screenshot` with `platform: "android"` and display the image.
-
 ### Navigate an app
 
 ```
 "Open Settings on my iOS simulator, then scroll down and tap General"
 ```
 
-Claude will use `launch_app` and `tap_element` with `scroll_to_find: true` to navigate.
+Claude will use `launch_app` and `tap_element` with `scroll_to_find: true`.
 
-### Tap elements without visible text
-
-```
-"Tap the start session button"
-```
-
-Claude will use `tap_element` with `resource_id: "start-session-button"` to find icon buttons by their resource ID.
-
-### Wait for loading to finish
+### Test a delivery route with mock GPS
 
 ```
-"Tap 'Picking Flow', wait for the loading to finish, then tap the first session"
+"Set the location to the first stop of the route and verify the app shows 'You have arrived'"
 ```
 
-Claude will use `tap_element`, then `wait_for_element_gone` with the loading indicator's resource_id, then proceed.
+Claude will use `set_location`, then `wait_for_element`.
 
-### Run a test flow efficiently
-
-```
-"Tap 'Picking Flow', wait for the sessions to load, tap the first session, fill in the value, and submit"
-```
-
-Claude will use `tap_element` with `observe_stabilize: true` and `wait_for_element` to handle loading states server-side.
-
-### Inspect the UI
+### Record a bug repro
 
 ```
-"What buttons are visible on the screen?"
+"Record the screen while you reproduce the crash, then give me the video"
 ```
 
-Claude will use `get_ui_tree` with `only_clickable: true` to list only interactive elements.
+Claude will use `record_screen` (start), drive the flow, then `record_screen` (stop) and return the mp4 path.
+
+### Verify copy-to-clipboard
+
+```
+"Tap the copy tracking code button and verify the clipboard contains the code"
+```
+
+Claude will use `tap_element`, then `get_clipboard`.
+
+### Type Spanish text
+
+```
+"Fill the notes field with 'Entregar mañana según lo acordado'"
+```
+
+`type_text` detects the non-ASCII characters and delivers them via clipboard paste — `adb shell input text` would silently drop them.
 
 ## How It Works
 
-- **Android**: Uses `adb` commands directly (screencap, input, uiautomator, am, wm)
-- **iOS Simulators**: Uses `xcrun simctl` (screenshot, io, launch, openurl)
-- **iOS Physical Devices**: Uses `idb` (Facebook's iOS Development Bridge)
+- **Android**: Uses `adb` directly (screencap, input, uiautomator, am, pm, dumpsys, emu console). Commands run via `execFile` (no shell), with device-side quoting where needed — text and URLs with special characters are safe.
+- **iOS Simulators**: Uses `xcrun simctl` for lifecycle/screenshots/clipboard/location/appearance/recording, and `idb` for all UI interaction (simctl has no tap/swipe/type).
+- **iOS Physical Devices**: Uses `idb` (Facebook's iOS Development Bridge).
 
 Screenshots are compressed with [sharp](https://sharp.pixelplumbing.com/) (resized + JPEG quality) to stay under Claude's 1MB image limit.
 
-UI elements include `type`, `text`, `bounds`, `center_x`/`center_y` (for tapping), `clickable`, `resource_id`, `enabled`, and `focused`.
+## Development
+
+```bash
+mise install   # pins Node 22
+npm install
+npm test
+npm run build
+```
 
 ## License
 

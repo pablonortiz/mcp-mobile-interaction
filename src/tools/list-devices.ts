@@ -1,7 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import * as android from "../platforms/android.js";
-import * as ios from "../platforms/ios.js";
+import { getDriver } from "../platforms/driver.js";
+import type { Device, Platform } from "../types.js";
+import { READ_ONLY } from "../utils/annotations.js";
 
 export function registerListDevicesTool(server: McpServer) {
   server.tool(
@@ -13,32 +14,19 @@ export function registerListDevicesTool(server: McpServer) {
         .optional()
         .describe("Platform to list devices for. Omit to list both."),
     },
+    READ_ONLY,
     async ({ platform }) => {
-      const results = [];
+      const platforms: Platform[] = platform ? [platform] : ["android", "ios"];
+      const results: Device[] = [];
 
-      if (!platform || platform === "android") {
+      for (const p of platforms) {
         try {
-          const devices = await android.listDevices();
-          results.push(...devices);
+          results.push(...(await getDriver(p).listDevices()));
         } catch (e: any) {
           results.push({
             id: "error",
-            name: `Android error: ${e.message}`,
-            platform: "android",
-            status: "error",
-          });
-        }
-      }
-
-      if (!platform || platform === "ios") {
-        try {
-          const devices = await ios.listDevices();
-          results.push(...devices);
-        } catch (e: any) {
-          results.push({
-            id: "error",
-            name: `iOS error: ${e.message}`,
-            platform: "ios",
+            name: `${p} error: ${e.message}`,
+            platform: p,
             status: "error",
           });
         }

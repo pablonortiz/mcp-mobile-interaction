@@ -1,9 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import * as android from "../platforms/android.js";
-import * as ios from "../platforms/ios.js";
+import { getDriver } from "../platforms/driver.js";
 import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
+import { ACTION } from "../utils/annotations.js";
 
 export function registerSwipeTool(server: McpServer) {
   server.tool(
@@ -53,9 +53,7 @@ export function registerSwipeTool(server: McpServer) {
       observe: z
         .enum(["none", "ui_tree", "screenshot", "both"])
         .optional()
-        .describe(
-          "Capture screen state after action. Default: none",
-        ),
+        .describe("Capture screen state after action. Default: none"),
       observe_delay_ms: z
         .number()
         .int()
@@ -64,10 +62,9 @@ export function registerSwipeTool(server: McpServer) {
       observe_stabilize: z
         .boolean()
         .optional()
-        .describe(
-          "If true, wait for UI to stabilize instead of fixed delay. Default: false",
-        ),
+        .describe("If true, wait for UI to stabilize instead of fixed delay. Default: false"),
     },
+    ACTION,
     async ({
       platform,
       device_id,
@@ -82,16 +79,14 @@ export function registerSwipeTool(server: McpServer) {
       observe_delay_ms,
       observe_stabilize,
     }) => {
+      const driver = getDriver(platform);
       const duration = duration_ms ?? 300;
-      const scaleFn = (v: number) => screenshot_scale ? Math.round(v / screenshot_scale) : Math.round(v);
+      const scaleFn = (v: number) =>
+        screenshot_scale ? Math.round(v / screenshot_scale) : Math.round(v);
       let sx: number, sy: number, ex: number, ey: number;
 
       if (direction) {
-        // Auto-compute coordinates based on screen info
-        const screenInfo =
-          platform === "android"
-            ? await android.getScreenInfo(device_id)
-            : await ios.getScreenInfo(device_id);
+        const screenInfo = await driver.getScreenInfo(device_id);
 
         const cx = Math.round(screenInfo.width / 2);
         const cy = Math.round(screenInfo.height / 2);
@@ -135,11 +130,7 @@ export function registerSwipeTool(server: McpServer) {
         ey = scaleFn(end_y);
       }
 
-      if (platform === "android") {
-        await android.swipe(sx, sy, ex, ey, duration, device_id);
-      } else {
-        await ios.swipe(sx, sy, ex, ey, duration, device_id);
-      }
+      await driver.swipe(sx, sy, ex, ey, duration, device_id);
 
       const observation = await performObservation({
         mode: observe ?? "none",

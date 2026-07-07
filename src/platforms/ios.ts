@@ -1,15 +1,46 @@
-import { exec, execBuffer } from "../utils/exec.js";
-import type { Device, UiElement, ScreenInfo } from "../types.js";
-import { annotateOverlays } from "../utils/overlay-detect.js";
 import { tmpdir } from "os";
 import { join } from "path";
+import { readFile, readdir, rm, unlink } from "fs/promises";
+import type { ChildProcess } from "child_process";
+import { run, spawnProc } from "../utils/exec.js";
+import type {
+  AppInfo,
+  Device,
+  ForegroundApp,
+  LogOptions,
+  ScreenInfo,
+  TypeTextMethod,
+  UiElement,
+} from "../types.js";
+import { annotateOverlays } from "../utils/overlay-detect.js";
+
+const DEVICE_CACHE_TTL_MS = 10_000;
+let cachedFirstDevice: { id: string; timestamp: number } | undefined;
+let idbAvailable: boolean | undefined;
+const simulatorCache = new Map<string, boolean>();
+
+export function resetCaches(): void {
+  cachedFirstDevice = undefined;
+  idbAvailable = undefined;
+  simulatorCache.clear();
+}
 
 async function hasIdb(): Promise<boolean> {
+  if (idbAvailable !== undefined) return idbAvailable;
   try {
-    await exec("which idb");
-    return true;
+    await run("which", ["idb"]);
+    idbAvailable = true;
   } catch {
-    return false;
+    idbAvailable = false;
+  }
+  return idbAvailable;
+}
+
+async function requireIdb(operation: string): Promise<void> {
+  if (!(await hasIdb())) {
+    throw new Error(
+      `idb is required for ${operation} on iOS (xcrun simctl has no UI interaction commands). Install it: brew install idb-companion && pip install fb-idb`,
+    );
   }
 }
 
@@ -18,7 +49,13 @@ export async function listDevices(): Promise<Device[]> {
 
   // Simulators via xcrun simctl
   try {
-    const output = await exec("xcrun simctl list devices available --json");
+    const output = await run("xcrun", [
+      "simctl",
+      "list",
+      "devices",
+      "available",
+      "--json",
+    ]);
     const data = JSON.parse(output);
     const runtimes = data.devices ?? {};
 
@@ -43,13 +80,12 @@ export async function listDevices(): Promise<Device[]> {
   // Physical devices via idb
   if (await hasIdb()) {
     try {
-      const output = await exec("idb list-targets --json");
+      const output = await run("idb", ["list-targets", "--json"]);
       const lines = output.trim().split("\n");
       for (const line of lines) {
         try {
           const target = JSON.parse(line);
           if (target.type === "device") {
-            // Avoid duplicates
             if (!devices.find((d) => d.id === target.udid)) {
               devices.push({
                 id: target.udid,
@@ -72,19 +108,27 @@ export async function listDevices(): Promise<Device[]> {
 }
 
 export async function getFirstDeviceId(): Promise<string> {
+  if (
+    cachedFirstDevice &&
+    Date.now() - cachedFirstDevice.timestamp < DEVICE_CACHE_TTL_MS
+  ) {
+    return cachedFirstDevice.id;
+  }
+
   const devices = await listDevices();
   // Prefer booted simulators first
   const booted = devices.filter((d) => d.status === "booted");
-  if (booted.length > 0) return booted[0].id;
+  const connected = booted.length > 0
+    ? booted
+    : devices.filter((d) => d.status === "connected");
 
-  const connected = devices.filter(
-    (d) => d.status === "booted" || d.status === "connected",
-  );
   if (connected.length === 0) {
     throw new Error(
       "No connected iOS devices or booted simulators found. Boot a simulator with `xcrun simctl boot <device>` or connect a device with idb.",
     );
   }
+
+  cachedFirstDevice = { id: connected[0].id, timestamp: Date.now() };
   return connected[0].id;
 }
 
@@ -93,44 +137,42 @@ async function resolveDevice(deviceId?: string): Promise<string> {
 }
 
 async function isSimulator(deviceId: string): Promise<boolean> {
+  const cached = simulatorCache.get(deviceId);
+  if (cached !== undefined) return cached;
+
+  let result = false;
   try {
-    const output = await exec("xcrun simctl list devices --json");
+    const output = await run("xcrun", ["simctl", "list", "devices", "--json"]);
     const data = JSON.parse(output);
     for (const devs of Object.values(data.devices ?? {})) {
       for (const dev of devs as Array<{ udid: string }>) {
-        if (dev.udid === deviceId) return true;
+        if (dev.udid === deviceId) {
+          result = true;
+          break;
+        }
       }
     }
   } catch {
     // Assume physical device if simctl fails
   }
-  return false;
+
+  simulatorCache.set(deviceId, result);
+  return result;
 }
 
 export async function screenshot(deviceId?: string): Promise<Buffer> {
   const id = await resolveDevice(deviceId);
-  const isSim = await isSimulator(id);
+  const tmpFile = join(tmpdir(), `mcp-screenshot-${id}.png`);
 
-  if (isSim) {
-    const tmpFile = join(tmpdir(), `mcp-screenshot-${id}.png`);
-    await exec(`xcrun simctl io ${id} screenshot --type png ${tmpFile}`, {
+  if (await isSimulator(id)) {
+    await run("xcrun", ["simctl", "io", id, "screenshot", "--type", "png", tmpFile], {
       timeout: 30_000,
     });
-    const { readFile, unlink } = await import("fs/promises");
-    const buffer = await readFile(tmpFile);
-    await unlink(tmpFile).catch(() => {});
-    return buffer;
+  } else {
+    await requireIdb("screenshots on physical devices");
+    await run("idb", ["screenshot", "--udid", id, tmpFile], { timeout: 30_000 });
   }
 
-  // Physical device via idb
-  if (!(await hasIdb())) {
-    throw new Error(
-      "idb is required for screenshots on physical iOS devices. Install it: brew install idb-companion && pip install fb-idb",
-    );
-  }
-  const tmpFile = join(tmpdir(), `mcp-screenshot-${id}.png`);
-  await exec(`idb screenshot --udid ${id} ${tmpFile}`, { timeout: 30_000 });
-  const { readFile, unlink } = await import("fs/promises");
   const buffer = await readFile(tmpFile);
   await unlink(tmpFile).catch(() => {});
   return buffer;
@@ -142,14 +184,8 @@ export async function tap(
   deviceId?: string,
 ): Promise<void> {
   const id = await resolveDevice(deviceId);
-  const isSim = await isSimulator(id);
-
-  if (isSim) {
-    await exec(`xcrun simctl io ${id} tap ${x} ${y}`);
-  } else {
-    await requireIdb();
-    await exec(`idb ui tap --udid ${id} ${x} ${y}`);
-  }
+  await requireIdb("tap");
+  await run("idb", ["ui", "tap", "--udid", id, String(x), String(y)]);
 }
 
 export async function doubleTap(
@@ -158,15 +194,10 @@ export async function doubleTap(
   deviceId?: string,
 ): Promise<void> {
   const id = await resolveDevice(deviceId);
-
-  if (await hasIdb()) {
-    await exec(`idb ui tap --double --udid ${id} ${x} ${y}`);
-  } else {
-    // Fallback: two rapid taps via simctl
-    await exec(`xcrun simctl io ${id} tap ${x} ${y}`);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    await exec(`xcrun simctl io ${id} tap ${x} ${y}`);
-  }
+  await requireIdb("double tap");
+  await run("idb", ["ui", "tap", "--udid", id, String(x), String(y)]);
+  await delay(50);
+  await run("idb", ["ui", "tap", "--udid", id, String(x), String(y)]);
 }
 
 export async function longPress(
@@ -176,16 +207,17 @@ export async function longPress(
   deviceId?: string,
 ): Promise<void> {
   const id = await resolveDevice(deviceId);
-  const durationSec = durationMs / 1000;
-
-  if (await hasIdb()) {
-    await exec(`idb ui tap --duration ${durationSec} --udid ${id} ${x} ${y}`);
-  } else {
-    // simctl doesn't natively support long press; use a swipe to same point
-    await exec(
-      `xcrun simctl io ${id} swipe ${x} ${y} ${x} ${y} --duration ${durationSec}`,
-    );
-  }
+  await requireIdb("long press");
+  await run("idb", [
+    "ui",
+    "tap",
+    "--udid",
+    id,
+    "--duration",
+    String(durationMs / 1000),
+    String(x),
+    String(y),
+  ]);
 }
 
 export async function swipe(
@@ -197,148 +229,274 @@ export async function swipe(
   deviceId?: string,
 ): Promise<void> {
   const id = await resolveDevice(deviceId);
-
-  if (await hasIdb()) {
-    await exec(
-      `idb ui swipe --udid ${id} ${startX} ${startY} ${endX} ${endY} --duration ${durationMs / 1000}`,
-    );
-  } else {
-    await exec(
-      `xcrun simctl io ${id} swipe ${startX} ${startY} ${endX} ${endY}`,
-    );
-  }
+  await requireIdb("swipe");
+  await run("idb", [
+    "ui",
+    "swipe",
+    "--udid",
+    id,
+    "--duration",
+    String(durationMs / 1000),
+    String(startX),
+    String(startY),
+    String(endX),
+    String(endY),
+  ]);
 }
 
 export async function typeText(
   text: string,
   deviceId?: string,
-): Promise<void> {
+): Promise<TypeTextMethod> {
   const id = await resolveDevice(deviceId);
+  await requireIdb("typing text");
+  await run("idb", ["ui", "text", "--udid", id, text]);
+  return "keyboard";
+}
 
-  if (await hasIdb()) {
-    // Escape for shell
-    const escaped = text.replace(/'/g, "'\\''");
-    await exec(`idb ui text --udid ${id} '${escaped}'`);
-  } else {
-    // simctl keyboard input
-    const escaped = text.replace(/'/g, "'\\''");
-    await exec(`xcrun simctl io ${id} type '${escaped}'`);
+export async function setClipboard(
+  deviceId: string,
+  text: string,
+): Promise<void> {
+  if (!(await isSimulator(deviceId))) {
+    throw new Error(
+      "Setting the clipboard on physical iOS devices is not supported via CLI.",
+    );
   }
+  await run("xcrun", ["simctl", "pbcopy", deviceId], { stdin: text });
 }
 
-export async function setClipboard(text: string): Promise<void> {
-  // iOS simulators share clipboard with macOS via pbcopy
-  const escaped = text.replace(/'/g, "'\\''");
-  await exec(`echo '${escaped}' | pbcopy`);
+export async function getClipboard(deviceId: string): Promise<string> {
+  if (!(await isSimulator(deviceId))) {
+    throw new Error(
+      "Reading the clipboard on physical iOS devices is not supported via CLI.",
+    );
+  }
+  return run("xcrun", ["simctl", "pbpaste", deviceId]);
 }
-
-const IOS_LOG_LEVEL_MAP: Record<string, string> = {
-  verbose: "debug",
-  debug: "debug",
-  info: "info",
-  warn: "default",
-  error: "error",
-};
 
 export async function getLogs(
   deviceId: string,
-  options: { tag?: string; level?: string; lines?: number },
+  options: LogOptions,
 ): Promise<string> {
-  const predicates: string[] = [];
-
-  if (options.tag) {
-    predicates.push(`subsystem == "${options.tag}"`);
+  if (!(await isSimulator(deviceId))) {
+    throw new Error(
+      "Reading logs on physical iOS devices is not supported. Use Console.app or `idb log` interactively.",
+    );
   }
+
+  const IOS_LOG_LEVEL_MAP: Record<string, string> = {
+    verbose: "debug",
+    debug: "debug",
+    info: "info",
+    warn: "default",
+    error: "error",
+  };
+
+  const predicates: string[] = [];
+  if (options.tag) predicates.push(`subsystem == "${options.tag}"`);
   if (options.level) {
     const logType = IOS_LOG_LEVEL_MAP[options.level] ?? "info";
     predicates.push(`messageType >= ${logType}`);
   }
 
-  let cmd = `xcrun simctl spawn ${deviceId} log show --last 1m --style compact`;
+  const args = [
+    "simctl",
+    "spawn",
+    deviceId,
+    "log",
+    "show",
+    "--last",
+    "1m",
+    "--style",
+    "compact",
+  ];
   if (predicates.length > 0) {
-    cmd += ` --predicate '${predicates.join(" AND ")}'`;
+    args.push("--predicate", predicates.join(" AND "));
   }
 
+  const output = await run("xcrun", args, { timeout: 30_000 });
   const lines = options.lines ?? 50;
-  cmd += ` | tail -n ${lines}`;
-
-  return exec(cmd, { timeout: 30_000 });
+  return output.split("\n").slice(-lines).join("\n");
 }
 
 export async function clearAppData(
   deviceId: string,
   bundleId: string,
 ): Promise<void> {
-  const isSim = await isSimulator(deviceId);
-
-  if (isSim) {
-    await exec(`xcrun simctl uninstall ${deviceId} ${bundleId}`);
-  } else {
+  if (!(await isSimulator(deviceId))) {
     throw new Error(
       "Clearing app data on physical iOS devices is not possible via CLI. Use the device's Settings app instead.",
     );
   }
+  await run("xcrun", ["simctl", "uninstall", deviceId, bundleId]);
 }
 
 export async function clearAppCache(
   deviceId: string,
   bundleId: string,
 ): Promise<void> {
-  const isSim = await isSimulator(deviceId);
-
-  if (!isSim) {
+  if (!(await isSimulator(deviceId))) {
     throw new Error(
       "Clearing app cache on physical iOS devices is not possible via CLI. Use the device's Settings app instead.",
     );
   }
 
-  const containerPath = (await exec(
-    `xcrun simctl get_app_container ${deviceId} ${bundleId} data`,
-  )).trim();
+  const containerPath = (
+    await run("xcrun", ["simctl", "get_app_container", deviceId, bundleId, "data"])
+  ).trim();
 
-  await exec(`rm -rf "${containerPath}/Library/Caches"/*`);
-  await exec(`rm -rf "${containerPath}/tmp"/*`);
+  await emptyDir(join(containerPath, "Library", "Caches"));
+  await emptyDir(join(containerPath, "tmp"));
+}
+
+async function emptyDir(dir: string): Promise<void> {
+  const entries = await readdir(dir).catch(() => [] as string[]);
+  await Promise.all(
+    entries.map((entry) =>
+      rm(join(dir, entry), { recursive: true, force: true }),
+    ),
+  );
 }
 
 export async function killApp(
   deviceId: string,
   bundleId: string,
 ): Promise<void> {
-  const isSim = await isSimulator(deviceId);
-
-  if (isSim) {
-    await exec(`xcrun simctl terminate ${deviceId} ${bundleId}`);
+  if (await isSimulator(deviceId)) {
+    await run("xcrun", ["simctl", "terminate", deviceId, bundleId]);
   } else {
-    await requireIdb();
-    await exec(`idb terminate --udid ${deviceId} ${bundleId}`);
+    await requireIdb("killing apps on physical devices");
+    await run("idb", ["terminate", "--udid", deviceId, bundleId]);
   }
 }
 
-const IOS_KEY_MAP: Record<string, { idb: string; simctl?: string }> = {
-  home: { idb: "1", simctl: undefined }, // Home button handled differently
-  back: { idb: "back", simctl: undefined },
-  enter: { idb: "13", simctl: "return" },
-  delete: { idb: "42", simctl: "delete" },
-  volume_up: { idb: "volume_up" },
-  volume_down: { idb: "volume_down" },
-  power: { idb: "power" },
-  tab: { idb: "43", simctl: "tab" },
-  recent_apps: { idb: "recent_apps" },
-  menu: { idb: "82" },
-  escape: { idb: "53", simctl: "escape" },
-  search: { idb: "84" },
-  camera: { idb: "camera" },
-  media_play_pause: { idb: "media_play_pause" },
+export async function installApp(
+  deviceId: string,
+  appPath: string,
+): Promise<string> {
+  if (await isSimulator(deviceId)) {
+    await run("xcrun", ["simctl", "install", deviceId, appPath], {
+      timeout: 120_000,
+    });
+  } else {
+    await requireIdb("installing apps on physical devices");
+    await run("idb", ["install", "--udid", deviceId, appPath], {
+      timeout: 120_000,
+    });
+  }
+  return `Installed ${appPath}`;
+}
+
+export async function uninstallApp(
+  deviceId: string,
+  bundleId: string,
+): Promise<void> {
+  if (await isSimulator(deviceId)) {
+    await run("xcrun", ["simctl", "uninstall", deviceId, bundleId], {
+      timeout: 60_000,
+    });
+  } else {
+    await requireIdb("uninstalling apps on physical devices");
+    await run("idb", ["uninstall", "--udid", deviceId, bundleId], {
+      timeout: 60_000,
+    });
+  }
+}
+
+export async function getAppInfo(
+  deviceId: string,
+  bundleId: string,
+): Promise<AppInfo> {
+  if (await isSimulator(deviceId)) {
+    const output = await run("xcrun", ["simctl", "listapps", deviceId], {
+      timeout: 30_000,
+    });
+    const idx = output.indexOf(`"${bundleId}"`);
+    if (idx === -1) return { installed: false };
+
+    const section = output.slice(idx, idx + 2000);
+    return {
+      installed: true,
+      version_name: section.match(
+        /CFBundleShortVersionString\s*=\s*"?([^";\n]+)"?/,
+      )?.[1],
+      version_code: section.match(/CFBundleVersion\s*=\s*"?([^";\n]+)"?/)?.[1],
+    };
+  }
+
+  await requireIdb("querying apps on physical devices");
+  const output = await run("idb", ["list-apps", "--udid", deviceId], {
+    timeout: 30_000,
+  });
+  return { installed: output.includes(bundleId) };
+}
+
+export async function setLocation(
+  deviceId: string,
+  latitude: number,
+  longitude: number,
+): Promise<void> {
+  if (await isSimulator(deviceId)) {
+    await run("xcrun", [
+      "simctl",
+      "location",
+      deviceId,
+      "set",
+      `${latitude},${longitude}`,
+    ]);
+    return;
+  }
+
+  await requireIdb("mock location on physical devices");
+  await run("idb", [
+    "set-location",
+    "--udid",
+    deviceId,
+    String(latitude),
+    String(longitude),
+  ]);
+}
+
+export async function setAppearance(
+  deviceId: string,
+  mode: "dark" | "light",
+): Promise<void> {
+  if (!(await isSimulator(deviceId))) {
+    throw new Error(
+      "Changing appearance on physical iOS devices is not supported via CLI.",
+    );
+  }
+  await run("xcrun", ["simctl", "ui", deviceId, "appearance", mode]);
+}
+
+export async function getForegroundApp(
+  _deviceId: string,
+): Promise<ForegroundApp> {
+  throw new Error(
+    "Getting the foreground app is not supported on iOS via CLI. Use get_ui_tree to infer the current screen instead.",
+  );
+}
+
+const IOS_KEY_MAP: Record<string, string> = {
+  home: "HOME",
+  enter: "13",
+  delete: "42",
+  volume_up: "volume_up",
+  volume_down: "volume_down",
+  power: "power",
+  tab: "43",
+  escape: "53",
 };
 
 export async function pressKey(
   key?: string,
   deviceId?: string,
   keycode?: number,
+  repeat: number = 1,
 ): Promise<void> {
   const id = await resolveDevice(deviceId);
 
-  // Numeric keycode: not supported on iOS, ignore with warning
   if (keycode !== undefined && !key) {
     throw new Error(
       "Numeric keycode is not supported on iOS. Use a named key instead.",
@@ -346,56 +504,31 @@ export async function pressKey(
   }
 
   const mapping = key ? IOS_KEY_MAP[key] : undefined;
-
   if (!mapping) {
     throw new Error(
-      `Unknown key: ${key}. Supported keys: ${Object.keys(IOS_KEY_MAP).join(", ")}`,
+      `Unknown key: ${key}. Supported keys on iOS: ${Object.keys(IOS_KEY_MAP).join(", ")}`,
     );
   }
 
-  if (key === "home") {
-    // Home button
-    if (await hasIdb()) {
-      await exec(`idb ui button --udid ${id} HOME`);
+  await requireIdb("pressing keys");
+
+  for (let i = 0; i < Math.max(1, repeat); i++) {
+    if (key === "home") {
+      await run("idb", ["ui", "button", "--udid", id, "HOME"]);
     } else {
-      await exec(`xcrun simctl io ${id} keycode 0x124`);
+      await run("idb", ["ui", "key", "--udid", id, mapping]);
     }
-    return;
-  }
-
-  if (await hasIdb()) {
-    await exec(`idb ui key --udid ${id} ${mapping.idb}`);
-  } else if (mapping.simctl) {
-    await exec(`xcrun simctl io ${id} keycode ${mapping.simctl}`);
-  } else {
-    throw new Error(
-      `Key "${key}" is not supported on simulators without idb. Install idb: brew install idb-companion && pip install fb-idb`,
-    );
   }
 }
 
 export async function getUiTree(deviceId?: string): Promise<UiElement[]> {
   const id = await resolveDevice(deviceId);
+  await requireIdb("UI tree inspection");
 
-  if (await hasIdb()) {
-    const output = await exec(`idb ui describe-all --udid ${id}`, {
-      timeout: 30_000,
-    });
-    return annotateOverlays(parseIdbDescribeAll(output));
-  }
-
-  // Fallback: accessibility audit via simctl (limited)
-  try {
-    const output = await exec(
-      `xcrun simctl ui ${id} describe-all`,
-      { timeout: 30_000 },
-    );
-    return annotateOverlays(parseIdbDescribeAll(output));
-  } catch {
-    throw new Error(
-      "UI tree inspection requires idb for iOS. Install it: brew install idb-companion && pip install fb-idb",
-    );
-  }
+  const output = await run("idb", ["ui", "describe-all", "--udid", id], {
+    timeout: 30_000,
+  });
+  return annotateOverlays(parseIdbDescribeAll(output));
 }
 
 function parseIdbDescribeAll(output: string): UiElement[] {
@@ -438,25 +571,14 @@ function parseIdbDescribeAll(output: string): UiElement[] {
   return elements;
 }
 
-export async function getScreenInfo(
-  deviceId?: string,
-): Promise<ScreenInfo> {
+export async function getScreenInfo(deviceId?: string): Promise<ScreenInfo> {
   const id = await resolveDevice(deviceId);
-  const isSim = await isSimulator(id);
 
-  if (isSim) {
-    // Get device info from simctl
-    const output = await exec("xcrun simctl list devices --json");
-    const data = JSON.parse(output);
-
-    // Take a screenshot to determine actual size
-    const tmpFile = join(tmpdir(), `mcp-screeninfo-${id}.png`);
-    await exec(`xcrun simctl io ${id} screenshot --type png ${tmpFile}`);
+  if (await isSimulator(id)) {
+    // A screenshot is the most reliable way to get the effective resolution
+    const buffer = await screenshot(id);
     const sharp = (await import("sharp")).default;
-    const { readFile, unlink } = await import("fs/promises");
-    const buffer = await readFile(tmpFile);
     const metadata = await sharp(buffer).metadata();
-    await unlink(tmpFile).catch(() => {});
 
     const width = metadata.width ?? 0;
     const height = metadata.height ?? 0;
@@ -469,9 +591,8 @@ export async function getScreenInfo(
     };
   }
 
-  // Physical device via idb
-  await requireIdb();
-  const output = await exec(`idb describe --udid ${id} --json`);
+  await requireIdb("screen info on physical devices");
+  const output = await run("idb", ["describe", "--udid", id, "--json"]);
   const info = JSON.parse(output);
   const screenSize = info.screen_dimensions ?? {};
 
@@ -491,35 +612,109 @@ export async function launchApp(
   deviceId?: string,
 ): Promise<void> {
   const id = await resolveDevice(deviceId);
-  const isSim = await isSimulator(id);
 
-  if (isSim) {
-    await exec(`xcrun simctl launch ${id} ${bundleId}`);
+  if (await isSimulator(id)) {
+    await run("xcrun", ["simctl", "launch", id, bundleId]);
   } else {
-    await requireIdb();
-    await exec(`idb launch --udid ${id} ${bundleId}`);
+    await requireIdb("launching apps on physical devices");
+    await run("idb", ["launch", "--udid", id, bundleId]);
   }
 }
 
-export async function openUrl(
-  url: string,
-  deviceId?: string,
-): Promise<void> {
+export async function openUrl(url: string, deviceId?: string): Promise<void> {
   const id = await resolveDevice(deviceId);
-  const isSim = await isSimulator(id);
 
-  if (isSim) {
-    await exec(`xcrun simctl openurl ${id} "${url}"`);
+  if (await isSimulator(id)) {
+    await run("xcrun", ["simctl", "openurl", id, url]);
   } else {
-    await requireIdb();
-    await exec(`idb open --udid ${id} "${url}"`);
+    await requireIdb("opening URLs on physical devices");
+    await run("idb", ["open", "--udid", id, url]);
   }
 }
 
-async function requireIdb(): Promise<void> {
-  if (!(await hasIdb())) {
+const activeRecordings = new Map<string, { child: ChildProcess; path: string }>();
+
+export async function startRecording(deviceId?: string): Promise<string> {
+  const id = await resolveDevice(deviceId);
+  if (activeRecordings.has(id)) {
     throw new Error(
-      "idb is required for this operation on physical iOS devices. Install it: brew install idb-companion && pip install fb-idb",
+      `A recording is already in progress on ${id}. Stop it first with action: "stop".`,
     );
   }
+
+  const localPath = join(tmpdir(), `mcp-recording-${id}-${Date.now()}.mp4`);
+
+  let child: ChildProcess;
+  if (await isSimulator(id)) {
+    child = spawnProc("xcrun", [
+      "simctl",
+      "io",
+      id,
+      "recordVideo",
+      "--force",
+      localPath,
+    ]);
+  } else {
+    await requireIdb("screen recording on physical devices");
+    child = spawnProc("idb", ["record-video", "--udid", id, localPath]);
+  }
+
+  activeRecordings.set(id, { child, path: localPath });
+
+  await delay(500);
+  if (child.exitCode !== null && child.exitCode !== 0) {
+    activeRecordings.delete(id);
+    throw new Error("Screen recording failed to start.");
+  }
+
+  return id;
+}
+
+export async function stopRecording(deviceId?: string): Promise<string> {
+  const id = await resolveDevice(deviceId);
+  const recording = activeRecordings.get(id);
+  if (!recording) {
+    throw new Error(
+      `No active recording on ${id}. Start one with action: "start".`,
+    );
+  }
+  activeRecordings.delete(id);
+
+  // SIGINT lets recordVideo finalize the movie file
+  recording.child.kill("SIGINT");
+  await waitForExit(recording.child, 5000);
+  await delay(300);
+
+  return recording.path;
+}
+
+function waitForExit(child: ChildProcess, timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    if (child.exitCode !== null) return resolve();
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve();
+    }, timeoutMs);
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
+export async function clearTextField(
+  deviceId?: string,
+  maxChars: number = 50,
+): Promise<number> {
+  const id = await resolveDevice(deviceId);
+  await requireIdb("clearing text fields");
+
+  for (let i = 0; i < maxChars; i++) {
+    await run("idb", ["ui", "key", "--udid", id, IOS_KEY_MAP.delete]);
+  }
+  return maxChars;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
