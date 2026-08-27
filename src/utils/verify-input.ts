@@ -1,5 +1,4 @@
-import type { Platform, UiElement } from "../types.js";
-import { getDriver } from "../platforms/driver.js";
+import type { UiElement } from "../types.js";
 
 const SETTLE_MS = 300;
 
@@ -15,15 +14,14 @@ export interface InputVerification {
  * the caller would otherwise have no way to know the input was dropped.
  */
 export async function verifyTypedText(
-  platform: Platform,
-  deviceId: string | undefined,
+  readTree: () => Promise<UiElement[]>,
   expected: string,
 ): Promise<InputVerification> {
   await delay(SETTLE_MS);
 
   let tree: UiElement[];
   try {
-    tree = await getDriver(platform).getUiTree(deviceId);
+    tree = await readTree();
   } catch {
     return { ok: true, note: "could not verify — the UI tree was unavailable" };
   }

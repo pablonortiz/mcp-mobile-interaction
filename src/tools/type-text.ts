@@ -47,7 +47,10 @@ export function registerTypeTextTool(server: McpServer) {
       const verification =
         verify === false
           ? undefined
-          : await verifyTypedText(platform, device_id, text);
+          : await verifyTypedText(
+              () => getDriver(platform).getUiTree(device_id),
+              text,
+            );
 
       const observation = await performObservation({
         mode: observe ?? "none",

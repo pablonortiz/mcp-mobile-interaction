@@ -4,6 +4,7 @@ import { waitForStableUiTree } from "../utils/observe.js";
 import { describeSelector } from "./selector.js";
 import { describeNearMisses } from "../utils/similar-elements.js";
 import { readTree, invalidateTree } from "./tree-cache.js";
+import { verifyTypedText } from "../utils/verify-input.js";
 import type { UiElement } from "../types.js";
 import type { FlowCondition, FlowContext, FlowSelector, FlowStep } from "./types.js";
 
@@ -37,8 +38,7 @@ async function runStep(step: FlowStep, ctx: FlowContext): Promise<StepOutcome> {
     case "tap":
       return tap(step, ctx);
     case "inputText":
-      await ctx.driver.typeText(step.text, ctx.deviceId);
-      return ok();
+      return inputText(step, ctx);
     case "eraseText":
       await ctx.driver.clearTextField(ctx.deviceId, step.maxChars);
       return ok();
@@ -106,6 +106,30 @@ async function launchApp(
   else if (step.stopApp) await ctx.driver.killApp(ctx.deviceId, appId);
   await ctx.driver.launchApp(appId, ctx.deviceId);
   return ok();
+}
+
+/**
+ * Types and confirms the text landed. A flow that types into a field which has
+ * not taken focus yet fails several steps later, on whatever the missing input
+ * was supposed to enable — reporting it here names the real step.
+ */
+async function inputText(
+  step: Extract<FlowStep, { kind: "inputText" }>,
+  ctx: FlowContext,
+): Promise<StepOutcome> {
+  await ctx.driver.typeText(step.text, ctx.deviceId);
+  invalidateTree(ctx);
+
+  const verification = await verifyTypedText(
+    () => ctx.driver.getUiTree(ctx.deviceId),
+    step.text,
+  );
+  if (verification.ok) return ok();
+
+  return {
+    status: "failed",
+    detail: `the text did not land — ${verification.note}`,
+  };
 }
 
 async function tap(
