@@ -1,5 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
 import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
@@ -10,7 +14,7 @@ export function registerLongPressTool(server: McpServer) {
     "long_press",
     "Long-press at a specific coordinate on the device screen",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
@@ -45,7 +49,8 @@ export function registerLongPressTool(server: McpServer) {
         .describe("If true, wait for UI to stabilize instead of fixed delay. Default: false"),
     },
     ACTION,
-    async ({ platform, device_id, x, y, screenshot_scale, duration_ms, observe, observe_delay_ms, observe_stabilize }) => {
+    async ({ platform: platformArg, device_id, x, y, screenshot_scale, duration_ms, observe, observe_delay_ms, observe_stabilize }) => {
+      const platform = await resolvePlatform(platformArg);
       const duration = duration_ms ?? 1000;
       const nativeX = screenshot_scale ? Math.round(x / screenshot_scale) : Math.round(x);
       const nativeY = screenshot_scale ? Math.round(y / screenshot_scale) : Math.round(y);

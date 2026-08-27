@@ -1,5 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
 import { uiTreeSafe } from "../utils/ui-tree-fallback.js";
 import type { UiElement } from "../types.js";
@@ -17,7 +21,7 @@ export function registerWaitForElementTool(server: McpServer) {
     "wait_for_element",
     "Poll the UI tree until an element matching the criteria appears on screen. Returns matched elements and optionally the full UI tree or screenshot.",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
@@ -59,7 +63,7 @@ export function registerWaitForElementTool(server: McpServer) {
     },
     READ_ONLY,
     uiTreeSafe("wait for the element", async ({
-      platform,
+      platform: platformArg,
       device_id,
       text_contains,
       text_exact,
@@ -70,6 +74,7 @@ export function registerWaitForElementTool(server: McpServer) {
       poll_interval_ms,
       observe,
     }) => {
+      const platform = await resolvePlatform(platformArg);
       const driver = getDriver(platform);
       const timeout = timeout_ms ?? 30_000;
       const pollInterval = poll_interval_ms ?? 500;

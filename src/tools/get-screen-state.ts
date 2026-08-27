@@ -1,5 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { dedupeResponse } from "../utils/response-cache.js";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
 import { uiTreeSafe } from "../utils/ui-tree-fallback.js";
 import { compressScreenshot } from "../utils/image.js";
@@ -12,7 +17,7 @@ export function registerGetScreenStateTool(server: McpServer) {
     "get_screen_state",
     "Get the current screen state: UI tree and/or screenshot in a single call. UI tree is filtered to relevant elements by default.",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
@@ -25,6 +30,10 @@ export function registerGetScreenStateTool(server: McpServer) {
         .boolean()
         .optional()
         .describe("Filter UI tree to relevant elements only (with text or clickable). Default: true"),
+      force_full: z
+        .boolean()
+        .optional()
+        .describe("Return the tree even when it is identical to the last read. Default: false"),
       max_elements: z
         .number()
         .int()
@@ -34,7 +43,8 @@ export function registerGetScreenStateTool(server: McpServer) {
         .describe("Maximum elements to return; the rest is summarized. Default: 120"),
     },
     READ_ONLY,
-    uiTreeSafe("read the screen state", async ({ platform, device_id, include, filter_ui, max_elements }) => {
+    uiTreeSafe("read the screen state", async ({ platform: platformArg, device_id, include, filter_ui, max_elements, force_full }) => {
+      const platform = await resolvePlatform(platformArg);
       const driver = getDriver(platform);
       const mode = include ?? "both";
       const wantTree = mode === "ui_tree" || mode === "both";
@@ -53,10 +63,15 @@ export function registerGetScreenStateTool(server: McpServer) {
 
       if (tree) {
         const filtered = filterUiElements(tree, !(filter_ui ?? true));
-        content.push({
-          type: "text" as const,
-          text: formatUiTree(filtered, "UI tree", max_elements),
-        });
+        const { text } = dedupeResponse(
+          `screen_state:${platform}:${device_id ?? "default"}:${max_elements ?? "all"}`,
+          formatUiTree(filtered, "UI tree", max_elements),
+          {
+            force: force_full,
+            summary: `The UI tree (${filtered.length} elements)`,
+          },
+        );
+        content.push({ type: "text" as const, text });
       }
 
       if (screenshotBuffer) {

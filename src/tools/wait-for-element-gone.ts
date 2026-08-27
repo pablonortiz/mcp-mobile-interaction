@@ -1,5 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
 import { uiTreeSafe } from "../utils/ui-tree-fallback.js";
 import { performObservation } from "../utils/observe.js";
@@ -12,7 +16,7 @@ export function registerWaitForElementGoneTool(server: McpServer) {
     "wait_for_element_gone",
     "Poll the UI tree until an element matching the criteria disappears from screen. Useful for waiting until loading indicators, skeletons, or dialogs go away.",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
@@ -50,7 +54,7 @@ export function registerWaitForElementGoneTool(server: McpServer) {
     },
     READ_ONLY,
     uiTreeSafe("wait for the element to disappear", async ({
-      platform,
+      platform: platformArg,
       device_id,
       text_contains,
       text_exact,
@@ -60,6 +64,7 @@ export function registerWaitForElementGoneTool(server: McpServer) {
       poll_interval_ms,
       observe,
     }) => {
+      const platform = await resolvePlatform(platformArg);
       const criteria: MatchCriteria = {
         text_exact,
         text_contains,

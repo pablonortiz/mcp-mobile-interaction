@@ -1,5 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
 import { ACTION } from "../utils/annotations.js";
 
@@ -8,7 +12,7 @@ export function registerSetAppearanceTool(server: McpServer) {
     "set_appearance",
     "Switch the device between dark and light mode. Android: cmd uimode night. iOS: simulators only (simctl ui appearance). Useful for verifying both themes of a screen.",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
@@ -18,7 +22,8 @@ export function registerSetAppearanceTool(server: McpServer) {
         .describe("Appearance mode to set"),
     },
     ACTION,
-    async ({ platform, device_id, mode }) => {
+    async ({ platform: platformArg, device_id, mode }) => {
+      const platform = await resolvePlatform(platformArg);
       const driver = getDriver(platform);
       const deviceId = device_id ?? (await driver.getFirstDeviceId());
 

@@ -1,5 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
 import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
@@ -10,7 +14,7 @@ export function registerTypeTextTool(server: McpServer) {
     "type_text",
     "Type text into the currently focused input field. Full Unicode support: non-ASCII text (accents, emoji) is delivered via clipboard paste on Android.",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
@@ -31,7 +35,8 @@ export function registerTypeTextTool(server: McpServer) {
         .describe("If true, wait for UI to stabilize instead of fixed delay. Default: false"),
     },
     ACTION,
-    async ({ platform, device_id, text, observe, observe_delay_ms, observe_stabilize }) => {
+    async ({ platform: platformArg, device_id, text, observe, observe_delay_ms, observe_stabilize }) => {
+      const platform = await resolvePlatform(platformArg);
       const method = await getDriver(platform).typeText(text, device_id);
 
       const observation = await performObservation({

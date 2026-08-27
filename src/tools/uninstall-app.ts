@@ -1,5 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
 import { DESTRUCTIVE } from "../utils/annotations.js";
 
@@ -8,7 +12,7 @@ export function registerUninstallAppTool(server: McpServer) {
     "uninstall_app",
     "Uninstall an app from the device by package name (Android) or bundle ID (iOS). Removes all app data.",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
@@ -18,7 +22,8 @@ export function registerUninstallAppTool(server: McpServer) {
         .describe("App package name (Android) or bundle ID (iOS)"),
     },
     DESTRUCTIVE,
-    async ({ platform, device_id, package: packageName }) => {
+    async ({ platform: platformArg, device_id, package: packageName }) => {
+      const platform = await resolvePlatform(platformArg);
       const driver = getDriver(platform);
       const deviceId = device_id ?? (await driver.getFirstDeviceId());
 

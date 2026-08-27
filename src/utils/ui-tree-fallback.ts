@@ -2,6 +2,7 @@ import type { Platform } from "../types.js";
 import { getDriver } from "../platforms/driver.js";
 import { UiTreeUnavailableError } from "../platforms/android.js";
 import { compressScreenshot, isUniformImage } from "./image.js";
+import { resolvePlatform } from "./resolve-platform.js";
 
 interface DegradedResponse {
   [key: string]: unknown;
@@ -86,18 +87,22 @@ export function isUiTreeFailure(error: unknown): boolean {
  * Wraps a tool handler so a failed UI dump degrades to a screenshot response
  * instead of surfacing as a hard error for an action the user asked for.
  */
-export function uiTreeSafe<
-  A extends { platform: Platform; device_id?: string },
-  R,
->(action: string, handler: (args: A) => Promise<R>) {
+export function uiTreeSafe<A, R>(
+  action: string,
+  handler: (args: A) => Promise<R>,
+) {
   return async (args: A): Promise<R | DegradedResponse> => {
     try {
       return await handler(args);
     } catch (error) {
       if (!isUiTreeFailure(error)) throw error;
+      const { platform, device_id } = args as {
+        platform?: Platform;
+        device_id?: string;
+      };
       return degradedUiTreeResponse(
-        args.platform,
-        args.device_id,
+        await resolvePlatform(platform),
+        device_id,
         error,
         action,
       );

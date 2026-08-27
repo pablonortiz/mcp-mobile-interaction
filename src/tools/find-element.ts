@@ -1,5 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
 import { uiTreeSafe } from "../utils/ui-tree-fallback.js";
 import type { UiElement } from "../types.js";
@@ -13,7 +17,7 @@ export function registerFindElementTool(server: McpServer) {
     "find_element",
     "Find UI elements by text, resource_id, or type without interacting. Returns matching element details (center, size, state flags). Useful for assertions and verifications.",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
@@ -57,7 +61,7 @@ export function registerFindElementTool(server: McpServer) {
     },
     READ_ONLY,
     uiTreeSafe("find the element", async ({
-      platform,
+      platform: platformArg,
       device_id,
       text_exact,
       text_contains,
@@ -68,6 +72,7 @@ export function registerFindElementTool(server: McpServer) {
       scroll_direction,
       max_scrolls,
     }) => {
+      const platform = await resolvePlatform(platformArg);
       if (!text_exact && !text_contains && !resource_id && !type_contains) {
         return {
           content: [{

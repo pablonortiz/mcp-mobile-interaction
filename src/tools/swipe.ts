@@ -1,5 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
 import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
@@ -10,7 +14,7 @@ export function registerSwipeTool(server: McpServer) {
     "swipe",
     "Swipe on the device screen. Provide explicit coordinates or a direction (up/down/left/right) to auto-compute from screen center.",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
@@ -66,7 +70,7 @@ export function registerSwipeTool(server: McpServer) {
     },
     ACTION,
     async ({
-      platform,
+      platform: platformArg,
       device_id,
       start_x,
       start_y,
@@ -79,6 +83,7 @@ export function registerSwipeTool(server: McpServer) {
       observe_delay_ms,
       observe_stabilize,
     }) => {
+      const platform = await resolvePlatform(platformArg);
       const driver = getDriver(platform);
       const duration = duration_ms ?? 300;
       const scaleFn = (v: number) =>

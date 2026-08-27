@@ -1,5 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
 import type { UiElement } from "../types.js";
 import { performObservation } from "../utils/observe.js";
@@ -17,7 +21,7 @@ export function registerPressKeyTool(server: McpServer) {
     "press_key",
     "Press a hardware or navigation key on the device (home, back, enter, delete, paste, volume_up, volume_down, power, tab, recent_apps, menu, escape, search, camera, media_play_pause) or send a raw Android keycode. Supports repeat for multiple presses in one call.",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
@@ -71,7 +75,8 @@ export function registerPressKeyTool(server: McpServer) {
         .describe("If true, wait for UI to stabilize instead of fixed delay. Default: false"),
     },
     ACTION,
-    async ({ platform, device_id, key, keycode, repeat, observe, observe_delay_ms, observe_stabilize }) => {
+    async ({ platform: platformArg, device_id, key, keycode, repeat, observe, observe_delay_ms, observe_stabilize }) => {
+      const platform = await resolvePlatform(platformArg);
       if (!key && keycode === undefined) {
         return {
           content: [{ type: "text" as const, text: "Error: Provide at least one of key or keycode." }],

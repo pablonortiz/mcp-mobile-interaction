@@ -1,5 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
 import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
@@ -10,7 +14,7 @@ export function registerClearTextTool(server: McpServer) {
     "clear_text",
     "Clear the currently focused text field. On Android it reads the focused element's text length from the UI tree and deletes accordingly (move to end + backspaces).",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
@@ -33,7 +37,8 @@ export function registerClearTextTool(server: McpServer) {
         .describe("Ms to wait before observing. Default: 500"),
     },
     ACTION,
-    async ({ platform, device_id, max_chars, observe, observe_delay_ms }) => {
+    async ({ platform: platformArg, device_id, max_chars, observe, observe_delay_ms }) => {
+      const platform = await resolvePlatform(platformArg);
       const deleted = await getDriver(platform).clearTextField(device_id, max_chars);
 
       const observation = await performObservation({

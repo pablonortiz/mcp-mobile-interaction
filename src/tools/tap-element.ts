@@ -1,5 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
 import { uiTreeSafe } from "../utils/ui-tree-fallback.js";
 import type { UiElement } from "../types.js";
@@ -45,7 +49,7 @@ export function registerTapElementTool(server: McpServer) {
     "tap_element",
     "Find a UI element by text, resource_id, or type and tap its center. Combines get_ui_tree + tap in one call. Optionally waits for the element, or scrolls to find it.",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
@@ -105,7 +109,7 @@ export function registerTapElementTool(server: McpServer) {
     },
     ACTION,
     uiTreeSafe("tap the element", async ({
-      platform,
+      platform: platformArg,
       device_id,
       text_contains,
       text_exact,
@@ -120,6 +124,7 @@ export function registerTapElementTool(server: McpServer) {
       observe_delay_ms,
       observe_stabilize,
     }) => {
+      const platform = await resolvePlatform(platformArg);
       const criteria: MatchCriteria = { text_exact, text_contains, resource_id };
 
       if (!text_contains && !text_exact && !resource_id) {

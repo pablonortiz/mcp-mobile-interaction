@@ -1,5 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
 import { tmpdir } from "os";
 import { join } from "path";
 import * as android from "../platforms/android.js";
@@ -10,7 +14,7 @@ export function registerGetDeviceLogsTool(server: McpServer) {
     "get_device_logs",
     "Get OS-level device logs. Android: logcat. iOS: log show (simulators only). Captures native logs (crashes, ANRs, system events, SDK logs) — different from JavaScript console logs.",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
@@ -43,7 +47,8 @@ export function registerGetDeviceLogsTool(server: McpServer) {
         .optional()
         .describe("Android only. Write the entire log buffer to a local file and return its path plus a summary, instead of returning log lines. Use when the windowed read is not enough. Default: false"),
     },
-    async ({ platform, device_id, tag, search, level, lines, clear, dump_to_file }) => {
+    async ({ platform: platformArg, device_id, tag, search, level, lines, clear, dump_to_file }) => {
+      const platform = await resolvePlatform(platformArg);
       const driver = getDriver(platform);
       const deviceId = device_id ?? (await driver.getFirstDeviceId());
 

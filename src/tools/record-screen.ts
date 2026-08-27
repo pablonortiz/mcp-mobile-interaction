@@ -1,5 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
 import * as android from "../platforms/android.js";
 import { ACTION } from "../utils/annotations.js";
@@ -9,7 +13,7 @@ export function registerRecordScreenTool(server: McpServer) {
     "record_screen",
     'Record the device screen to an mp4 file. action "start" begins recording (Android caps at 180s), action "stop" finalizes it and returns the local file path. Useful for bug repro evidence.',
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
@@ -23,7 +27,8 @@ export function registerRecordScreenTool(server: McpServer) {
         .describe("With action \"start\": discard a recording already in progress instead of failing. Default: false"),
     },
     ACTION,
-    async ({ platform, device_id, action, force }) => {
+    async ({ platform: platformArg, device_id, action, force }) => {
+      const platform = await resolvePlatform(platformArg);
       const driver = getDriver(platform);
 
       if (action === "status") {

@@ -1,5 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
 import { uiTreeSafe } from "../utils/ui-tree-fallback.js";
 import { waitForStableUiTree } from "../utils/observe.js";
@@ -13,7 +17,7 @@ export function registerWaitForStableTool(server: McpServer) {
     "wait_for_stable",
     "Wait until the screen stops changing (two consecutive UI tree snapshots are identical). Returns the stable UI tree and optionally a screenshot.",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
@@ -39,13 +43,14 @@ export function registerWaitForStableTool(server: McpServer) {
     },
     READ_ONLY,
     uiTreeSafe("wait for the screen to settle", async ({
-      platform,
+      platform: platformArg,
       device_id,
       timeout_ms,
       poll_interval_ms,
       include_screenshot,
       filter_ui,
     }) => {
+      const platform = await resolvePlatform(platformArg);
       const tree = await waitForStableUiTree(
         platform,
         device_id,

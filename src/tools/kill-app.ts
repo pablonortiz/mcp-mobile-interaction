@@ -1,5 +1,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
+import {
+  resolvePackage,
+  PACKAGE_DESCRIPTION,
+} from "../utils/resolve-package.js";
 import { getDriver } from "../platforms/driver.js";
 import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
@@ -10,14 +18,15 @@ export function registerKillAppTool(server: McpServer) {
     "kill_app",
     "Force-stop an application by package name (Android) or bundle ID (iOS)",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
         .describe("Device ID. Omit to use the first connected device."),
       package: z
         .string()
-        .describe("App package name (Android, e.g. com.example.app) or bundle ID (iOS, e.g. com.apple.mobilesafari)"),
+        .optional()
+        .describe(PACKAGE_DESCRIPTION),
       observe: z
         .enum(["none", "screenshot"])
         .optional()
@@ -29,7 +38,13 @@ export function registerKillAppTool(server: McpServer) {
         .describe("Ms to wait before observing. Default: 500"),
     },
     DESTRUCTIVE,
-    async ({ platform, device_id, package: packageName, observe, observe_delay_ms }) => {
+    async ({ platform: platformArg, device_id, package: packageArg, observe, observe_delay_ms }) => {
+      const platform = await resolvePlatform(platformArg);
+      const packageName = await resolvePackage(
+        packageArg,
+        platform,
+        device_id,
+      );
       const driver = getDriver(platform);
       const deviceId = device_id ?? (await driver.getFirstDeviceId());
 

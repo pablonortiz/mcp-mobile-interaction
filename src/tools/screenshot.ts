@@ -1,5 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
 import {
   compressScreenshot,
@@ -15,7 +19,7 @@ export function registerScreenshotTool(server: McpServer) {
     "screenshot",
     "Capture a screenshot from an Android or iOS device/emulator/simulator. Returns the image as base64 JPEG. Optionally crop to a specific UI element (token-efficient way to inspect one component).",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
@@ -48,7 +52,7 @@ export function registerScreenshotTool(server: McpServer) {
     },
     READ_ONLY,
     async ({
-      platform,
+      platform: platformArg,
       device_id,
       quality,
       scale,
@@ -56,6 +60,7 @@ export function registerScreenshotTool(server: McpServer) {
       crop_text,
       crop_padding,
     }) => {
+      const platform = await resolvePlatform(platformArg);
       const driver = getDriver(platform);
       const wantsCrop = Boolean(crop_resource_id || crop_text);
 

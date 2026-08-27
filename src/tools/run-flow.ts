@@ -1,5 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
 import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
@@ -22,7 +26,7 @@ export function registerRunFlowTool(server: McpServer) {
       "Flows support ${VAR} placeholders resolved from the env parameter (or header env defaults). " +
       "A Maestro-style header (appId: ... env: ... --- ...) is supported in YAML flows; runFlow file: paths resolve relative to the referencing flow file.",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
@@ -63,7 +67,7 @@ export function registerRunFlowTool(server: McpServer) {
     },
     ACTION,
     async ({
-      platform,
+      platform: platformArg,
       device_id,
       flow_yaml,
       flow_file,
@@ -74,6 +78,7 @@ export function registerRunFlowTool(server: McpServer) {
       dry_run,
       observe,
     }) => {
+      const platform = await resolvePlatform(platformArg);
       const sources = [flow_yaml, flow_file, steps].filter((s) => s !== undefined);
       if (sources.length !== 1) {
         return errorResult("Provide exactly one of flow_yaml, flow_file, or steps.");
