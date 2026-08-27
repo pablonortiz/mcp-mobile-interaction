@@ -43,7 +43,10 @@ export interface PlatformDriver {
     keycode?: number,
     repeat?: number,
   ): Promise<void>;
-  getUiTree(deviceId?: string): Promise<UiElement[]>;
+  getUiTree(
+    deviceId?: string,
+    options?: { timeoutMs?: number },
+  ): Promise<UiElement[]>;
   getScreenInfo(deviceId?: string): Promise<ScreenInfo>;
   launchApp(pkg: string, deviceId?: string): Promise<void>;
   openUrl(url: string, deviceId?: string): Promise<void>;

@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getDriver } from "../platforms/driver.js";
+import { uiTreeSafe } from "../utils/ui-tree-fallback.js";
 import type { UiElement } from "../types.js";
 import { performObservation } from "../utils/observe.js";
 import { filterUiElements } from "../utils/ui-filter.js";
@@ -55,7 +56,7 @@ export function registerWaitForElementTool(server: McpServer) {
         .describe("Additional observation after element found. Default: none"),
     },
     READ_ONLY,
-    async ({
+    uiTreeSafe("wait for the element", async ({
       platform,
       device_id,
       text_contains,
@@ -117,6 +118,6 @@ export function registerWaitForElementTool(server: McpServer) {
         ],
         isError: true,
       };
-    },
+    }),
   );
 }

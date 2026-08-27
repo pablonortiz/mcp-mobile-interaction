@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getDriver } from "../platforms/driver.js";
+import { uiTreeSafe } from "../utils/ui-tree-fallback.js";
 import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
 import { matchElement, hasCriteria, describeCriteria, type MatchCriteria } from "../utils/element-matcher.js";
@@ -48,7 +49,7 @@ export function registerWaitForElementGoneTool(server: McpServer) {
         .describe("Capture screen state after element disappears. Default: none"),
     },
     READ_ONLY,
-    async ({
+    uiTreeSafe("wait for the element to disappear", async ({
       platform,
       device_id,
       text_contains,
@@ -118,6 +119,6 @@ export function registerWaitForElementGoneTool(server: McpServer) {
         ],
         isError: true,
       };
-    },
+    }),
   );
 }

@@ -638,10 +638,38 @@ describe("getUiTree", () => {
     expect(elements[1].resource_id).toBeUndefined();
   });
 
-  it("throws after all 4 strategies fail", async () => {
+  it("throws a typed error once every dump attempt fails", async () => {
     mockRun.mockRejectedValue(new Error("dump failed"));
     await expect(androidMod.getUiTree("dev1")).rejects.toThrow(
-      /Failed to parse UI tree XML/
+      /Failed to read the UI tree after \d+ dump attempts/,
     );
+  }, 15_000);
+
+  it("reports a non-idle screen as its own reason", async () => {
+    mockRun.mockRejectedValue(new Error("ERROR: could not get idle state."));
+    await expect(androidMod.getUiTree("dev1")).rejects.toThrow(
+      /never went idle/,
+    );
+  }, 15_000);
+
+  it("stops retrying once timeoutMs is spent", async () => {
+    mockRun.mockRejectedValue(new Error("dump failed"));
+    const started = Date.now();
+    await expect(
+      androidMod.getUiTree("dev1", { timeoutMs: 500 }),
+    ).rejects.toThrow(/dump attempts/);
+    expect(Date.now() - started).toBeLessThan(2000);
   });
-});
+
+  it("falls back to --compressed, which some animating screens still allow", async () => {
+    mockRun
+      .mockRejectedValueOnce(new Error("could not get idle state"))
+      .mockRejectedValueOnce(new Error("could not get idle state"))
+      .mockRejectedValueOnce(new Error("could not get idle state"))
+      .mockResolvedValueOnce(sampleXml);
+    await androidMod.getUiTree("dev1");
+    const compressedCall = mockRun.mock.calls.find((call) =>
+      (call[1] as string[]).includes("--compressed"),
+    );
+    expect(compressedCall).toBeDefined();
+  }, 15_000);

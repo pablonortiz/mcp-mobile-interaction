@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getDriver } from "../platforms/driver.js";
+import { uiTreeSafe } from "../utils/ui-tree-fallback.js";
 import { formatUiTree } from "../utils/format-ui.js";
 import { READ_ONLY } from "../utils/annotations.js";
 
@@ -30,6 +31,13 @@ export function registerGetUiTreeTool(server: McpServer) {
         .string()
         .optional()
         .describe("Only return elements whose resource_id contains this substring (case-insensitive)"),
+      dump_timeout_ms: z
+        .number()
+        .int()
+        .min(1000)
+        .max(60000)
+        .optional()
+        .describe("How long to keep retrying the UI dump on an animating screen. Default: ~5s of progressive backoff"),
       max_elements: z
         .number()
         .int()
@@ -39,8 +47,10 @@ export function registerGetUiTreeTool(server: McpServer) {
         .describe("Maximum elements to return; the rest is summarized. Default: 120"),
     },
     READ_ONLY,
-    async ({ platform, device_id, only_clickable, only_with_text, type_filter, resource_id_contains, max_elements }) => {
-      let elements = await getDriver(platform).getUiTree(device_id);
+    uiTreeSafe("read the UI tree", async ({ platform, device_id, only_clickable, only_with_text, type_filter, resource_id_contains, max_elements, dump_timeout_ms }) => {
+      let elements = await getDriver(platform).getUiTree(device_id, {
+        timeoutMs: dump_timeout_ms,
+      });
 
       const totalCount = elements.length;
 
@@ -76,6 +86,6 @@ export function registerGetUiTreeTool(server: McpServer) {
           },
         ],
       };
-    },
+    }),
   );
 }

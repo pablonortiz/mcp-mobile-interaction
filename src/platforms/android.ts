@@ -604,50 +604,105 @@ export async function rotate(
   ]);
 }
 
-export async function getUiTree(deviceId?: string): Promise<UiElement[]> {
+/**
+ * Progressive backoff. The old fixed pair of 800 ms waits totalled 1.6 s, too
+ * short for a screen that animates continuously (a MapView, an endless spinner)
+ * where uiautomator reports "could not get idle state".
+ */
+const UI_DUMP_ATTEMPTS: Array<{ waitMs: number; mode: "tty" | "file" | "compressed" }> = [
+  { waitMs: 0, mode: "tty" },
+  { waitMs: 0, mode: "file" },
+  { waitMs: 300, mode: "compressed" },
+  { waitMs: 800, mode: "tty" },
+  { waitMs: 1500, mode: "file" },
+  { waitMs: 2500, mode: "compressed" },
+];
+
+export async function getUiTree(
+  deviceId?: string,
+  options?: { timeoutMs?: number },
+): Promise<UiElement[]> {
   const id = await resolveDevice(deviceId);
+  const deadline = options?.timeoutMs
+    ? Date.now() + options.timeoutMs
+    : undefined;
 
-  // Strategy: tty → file → wait+tty → wait+file
-  const strategies: Array<() => Promise<string | null>> = [
-    () => dumpUiViaTty(id),
-    () => dumpUiViaFile(id),
-    async () => {
-      await delay(800);
-      return dumpUiViaTty(id);
-    },
-    async () => {
-      await delay(800);
-      return dumpUiViaFile(id);
-    },
-  ];
+  let lastError: unknown;
+  let attempts = 0;
 
-  for (const strategy of strategies) {
+  for (const attempt of UI_DUMP_ATTEMPTS) {
+    if (deadline && Date.now() + attempt.waitMs > deadline) break;
+    if (attempt.waitMs > 0) await delay(attempt.waitMs);
+    attempts++;
+
     try {
-      const xml = await strategy();
+      const xml = await dumpUi(id, attempt.mode);
       if (xml) {
         const elements = parseUiXml(xml);
         if (elements.length > 0) return annotateOverlays(elements);
       }
-    } catch {
-      // Try next strategy
+    } catch (error) {
+      lastError = error;
     }
   }
 
-  throw new Error(
-    "Failed to parse UI tree XML from uiautomator dump after 4 attempts. The screen may be in transition — try again after a short delay.",
-  );
+  throw new UiTreeUnavailableError(inferDumpFailure(lastError), attempts);
+}
+
+export type UiTreeFailureReason = "no-idle" | "device-gone" | "unknown";
+
+/** Carries why the dump failed so callers can degrade instead of just failing. */
+export class UiTreeUnavailableError extends Error {
+  constructor(
+    readonly reason: UiTreeFailureReason,
+    readonly attempts: number,
+  ) {
+    super(UI_TREE_FAILURE_MESSAGES[reason].replace("{n}", String(attempts)));
+    this.name = "UiTreeUnavailableError";
+  }
+}
+
+const UI_TREE_FAILURE_MESSAGES: Record<UiTreeFailureReason, string> = {
+  "no-idle":
+    "The screen never went idle after {n} dump attempts — something is animating (a map, a spinner, a transition). uiautomator cannot read a moving screen.",
+  "device-gone":
+    "The device stopped responding to adb after {n} dump attempts. Check that the emulator is still running.",
+  unknown:
+    "Failed to read the UI tree after {n} dump attempts. The screen may be in transition.",
+};
+
+function inferDumpFailure(error: unknown): UiTreeFailureReason {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  if (message.includes("idle")) return "no-idle";
+  if (message.includes("not found") || message.includes("no devices"))
+    return "device-gone";
+  return "unknown";
+}
+
+function dumpUi(
+  deviceId: string,
+  mode: "tty" | "file" | "compressed",
+): Promise<string | null> {
+  if (mode === "file") return dumpUiViaFile(deviceId);
+  return dumpUiViaTty(deviceId, mode === "compressed");
 }
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function dumpUiViaTty(deviceId: string): Promise<string | null> {
-  const output = await run(
-    "adb",
-    ["-s", deviceId, "exec-out", "uiautomator", "dump", "/dev/tty"],
-    { timeout: 30_000 },
-  );
+async function dumpUiViaTty(
+  deviceId: string,
+  compressed = false,
+): Promise<string | null> {
+  // --compressed skips non-interactive nodes: it succeeds on some animating
+  // screens where the full dump does not, and returns ~55% less XML.
+  const dumpArgs = compressed
+    ? ["uiautomator", "dump", "--compressed", "/dev/tty"]
+    : ["uiautomator", "dump", "/dev/tty"];
+  const output = await run("adb", ["-s", deviceId, "exec-out", ...dumpArgs], {
+    timeout: 30_000,
+  });
 
   const cleaned = output.replace(/\0/g, "").trim();
   return extractXml(cleaned);

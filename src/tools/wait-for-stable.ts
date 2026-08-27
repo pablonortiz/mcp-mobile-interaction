@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getDriver } from "../platforms/driver.js";
+import { uiTreeSafe } from "../utils/ui-tree-fallback.js";
 import { waitForStableUiTree } from "../utils/observe.js";
 import { filterUiElements } from "../utils/ui-filter.js";
 import { formatUiTree } from "../utils/format-ui.js";
@@ -37,7 +38,7 @@ export function registerWaitForStableTool(server: McpServer) {
         .describe("Filter UI tree to relevant elements only. Default: true"),
     },
     READ_ONLY,
-    async ({
+    uiTreeSafe("wait for the screen to settle", async ({
       platform,
       device_id,
       timeout_ms,
@@ -79,6 +80,6 @@ export function registerWaitForStableTool(server: McpServer) {
       }
 
       return { content };
-    },
+    }),
   );
 }

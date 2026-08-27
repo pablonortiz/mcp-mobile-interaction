@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getDriver } from "../platforms/driver.js";
+import { uiTreeSafe } from "../utils/ui-tree-fallback.js";
 import type { UiElement } from "../types.js";
 import { matchElement, describeCriteria, type MatchCriteria } from "../utils/element-matcher.js";
 import { formatUiElements, UI_LINE_FORMAT } from "../utils/format-ui.js";
@@ -55,7 +56,7 @@ export function registerFindElementTool(server: McpServer) {
         .describe("Maximum number of scrolls when scroll_to_find is true. Default: 5"),
     },
     READ_ONLY,
-    async ({
+    uiTreeSafe("find the element", async ({
       platform,
       device_id,
       text_exact,
@@ -119,6 +120,6 @@ export function registerFindElementTool(server: McpServer) {
           text: `Found ${results.length} element(s) matching ${criteriaDesc} (${UI_LINE_FORMAT}):\n${formatUiElements(results)}`,
         }],
       };
-    },
+    }),
   );
 }

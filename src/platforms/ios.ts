@@ -521,7 +521,10 @@ export async function pressKey(
   }
 }
 
-export async function getUiTree(deviceId?: string): Promise<UiElement[]> {
+export async function getUiTree(
+  deviceId?: string,
+  _options?: { timeoutMs?: number },
+): Promise<UiElement[]> {
   const id = await resolveDevice(deviceId);
   await requireIdb("UI tree inspection");
 

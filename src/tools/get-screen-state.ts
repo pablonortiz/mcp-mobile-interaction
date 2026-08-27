@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getDriver } from "../platforms/driver.js";
+import { uiTreeSafe } from "../utils/ui-tree-fallback.js";
 import { compressScreenshot } from "../utils/image.js";
 import { filterUiElements } from "../utils/ui-filter.js";
 import { formatUiTree } from "../utils/format-ui.js";
@@ -33,7 +34,7 @@ export function registerGetScreenStateTool(server: McpServer) {
         .describe("Maximum elements to return; the rest is summarized. Default: 120"),
     },
     READ_ONLY,
-    async ({ platform, device_id, include, filter_ui, max_elements }) => {
+    uiTreeSafe("read the screen state", async ({ platform, device_id, include, filter_ui, max_elements }) => {
       const driver = getDriver(platform);
       const mode = include ?? "both";
       const wantTree = mode === "ui_tree" || mode === "both";
@@ -74,6 +75,6 @@ export function registerGetScreenStateTool(server: McpServer) {
       }
 
       return { content };
-    },
+    }),
   );
 }

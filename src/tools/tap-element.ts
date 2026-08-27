@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getDriver } from "../platforms/driver.js";
+import { uiTreeSafe } from "../utils/ui-tree-fallback.js";
 import type { UiElement } from "../types.js";
 import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
@@ -102,7 +103,7 @@ export function registerTapElementTool(server: McpServer) {
         .describe("If true, wait for UI to stabilize after tap. Default: false"),
     },
     ACTION,
-    async ({
+    uiTreeSafe("tap the element", async ({
       platform,
       device_id,
       text_contains,
@@ -261,6 +262,6 @@ export function registerTapElementTool(server: McpServer) {
       return {
         content: buildResponseContent(confirmation, observation),
       };
-    },
+    }),
   );
 }
