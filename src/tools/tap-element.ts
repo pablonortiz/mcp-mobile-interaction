@@ -8,6 +8,21 @@ import { matchElement, describeCriteria, type MatchCriteria } from "../utils/ele
 import { scrollOnce } from "../utils/scroll.js";
 import { ACTION } from "../utils/annotations.js";
 
+/**
+ * Picks the target among matches. Without an explicit index, clickable matches
+ * win: headers/labels often match the same text first in the tree and produce
+ * silent no-op taps.
+ */
+function pickTarget(
+  matches: UiElement[],
+  explicitIndex: number | undefined,
+): UiElement | undefined {
+  if (explicitIndex !== undefined) {
+    return matches.length > explicitIndex ? matches[explicitIndex] : undefined;
+  }
+  return matches.find((el) => el.clickable) ?? matches[0];
+}
+
 function findCoveringOverlay(
   tree: UiElement[],
   target: UiElement,
@@ -129,10 +144,8 @@ export function registerTapElementTool(server: McpServer) {
         for (let i = 0; i <= scrollLimit; i++) {
           lastTree = await driver.getUiTree(device_id);
           const matches = lastTree.filter((el) => matchElement(el, criteria));
-          if (matches.length > targetIndex) {
-            target = matches[targetIndex];
-            break;
-          }
+          target = pickTarget(matches, matchIndex);
+          if (target) break;
           if (i < scrollLimit) {
             await scrollOnce(platform, scroll_direction ?? "down", device_id);
             await new Promise((resolve) => setTimeout(resolve, 500));
@@ -155,10 +168,8 @@ export function registerTapElementTool(server: McpServer) {
         while (Date.now() - start < timeout) {
           lastTree = await driver.getUiTree(device_id);
           const matches = lastTree.filter((el) => matchElement(el, criteria));
-          if (matches.length > targetIndex) {
-            target = matches[targetIndex];
-            break;
-          }
+          target = pickTarget(matches, matchIndex);
+          if (target) break;
           await new Promise((resolve) => setTimeout(resolve, 500));
         }
 
@@ -187,7 +198,7 @@ export function registerTapElementTool(server: McpServer) {
             isError: true,
           };
         }
-        if (matches.length <= targetIndex) {
+        if (matchIndex !== undefined && matches.length <= targetIndex) {
           return {
             content: [
               {
@@ -198,10 +209,26 @@ export function registerTapElementTool(server: McpServer) {
             isError: true,
           };
         }
-        target = matches[targetIndex];
+        target = pickTarget(matches, matchIndex);
+        if (!target) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Element not found (${describeCriteria(criteria)}).`,
+              },
+            ],
+            isError: true,
+          };
+        }
       }
 
       const warnings: string[] = [];
+      if (!target.clickable) {
+        warnings.push(
+          "Warning: the matched element is not clickable — the tap may have no effect. If a different element was intended, refine the selector or pass index.",
+        );
+      }
       if (target.enabled === false) {
         warnings.push(
           "Warning: the element is disabled (enabled=false) — the tap may have no effect.",

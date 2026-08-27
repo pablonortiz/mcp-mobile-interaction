@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { existsSync } from "fs";
 import { join } from "path";
+import sharp from "sharp";
 import { run } from "../utils/exec.js";
 import * as android from "../platforms/android.js";
 import * as ios from "../platforms/ios.js";
@@ -74,6 +75,25 @@ export function registerDoctorTool(server: McpServer) {
         });
       }
 
+      // Screen capture sanity — emulators can boot into a state where screencap
+      // returns a uniform (black) frame while the UI tree keeps working.
+      try {
+        const devices = await android.listDevices();
+        const first = devices.find((d) => d.status === "device");
+        if (first) {
+          const uniform = await isUniformImage(await android.screenshot(first.id));
+          checks.push({
+            label: "Screen capture",
+            ok: !uniform,
+            detail: uniform
+              ? `screencap on ${first.id} returns a uniform (likely black) frame — known emulator GPU issue. Screenshots will be useless until a cold boot; the UI tree is unaffected.`
+              : `screencap on ${first.id} returns real pixels`,
+          });
+        }
+      } catch {
+        // No device or capture failed — the devices check above already covers it.
+      }
+
       // xcrun simctl
       try {
         await run("xcrun", ["simctl", "help"], { timeout: 10_000 });
@@ -119,4 +139,10 @@ export function registerDoctorTool(server: McpServer) {
       };
     },
   );
+}
+
+/** True when every channel is flat (no pixel variation) — a dead frame. */
+export async function isUniformImage(buffer: Buffer): Promise<boolean> {
+  const { channels } = await sharp(buffer).stats();
+  return channels.every((channel) => channel.stdev < 1);
 }

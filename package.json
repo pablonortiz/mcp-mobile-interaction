@@ -1,6 +1,6 @@
 {
   "name": "mcp-mobile-interaction",
-  "version": "1.4.0",
+  "version": "1.6.1",
   "description": "MCP server for interacting with Android and iOS devices/emulators — screenshots, taps, swipes, typing, UI inspection, and more.",
   "type": "module",
   "main": "dist/index.js",
@@ -40,6 +40,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
     "sharp": "^0.33.5",
+    "yaml": "^2.9.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {

@@ -37,10 +37,11 @@ import { registerSetAppearanceTool } from "./tools/set-appearance.js";
 import { registerRotateDeviceTool } from "./tools/rotate-device.js";
 import { registerClearTextTool } from "./tools/clear-text.js";
 import { registerDoctorTool } from "./tools/doctor.js";
+import { registerRunFlowTool } from "./tools/run-flow.js";
 
 const server = new McpServer({
   name: "mcp-mobile-interaction",
-  version: "1.4.0",
+  version: "1.6.1",
 });
 
 registerListDevicesTool(server);
@@ -77,6 +78,7 @@ registerSetAppearanceTool(server);
 registerRotateDeviceTool(server);
 registerClearTextTool(server);
 registerDoctorTool(server);
+registerRunFlowTool(server);
 
 async function main() {
   const transport = new StdioServerTransport();

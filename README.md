@@ -110,6 +110,61 @@ All tools accept a `platform` parameter (`"android"` or `"ios"`) and an optional
 | `wait_for_element_gone` | Poll until a matching element disappears (spinners, skeletons, dialogs) |
 | `wait_for_stable` | Poll until the screen stops changing (two consecutive UI snapshots match) |
 
+### Flow Runner
+
+| Tool | Description |
+|------|-------------|
+| `run_flow` | Run a declarative multi-step flow server-side in a single call — deterministic sequences (login, navigation) stop costing one LLM round-trip per tap |
+
+Flows use a subset of [Maestro's](https://docs.maestro.dev) YAML syntax, so they migrate to Maestro almost 1:1 if you later want a standalone e2e suite. Pass the flow as `flow_yaml` (inline YAML), `flow_file` (path to a versioned `.yaml`), or `steps` (JSON array).
+
+```yaml
+appId: com.example.app
+---
+- launchApp
+- tapOn: "Delivery"
+- tapOn:
+    text: "Permitir"          # known permission popup
+    optional: true            # skip silently if absent
+- runFlow:
+    when:
+      visible: "Novedades"    # conditional popup handling
+    commands:
+      - tapOn: "Cerrar"
+- scrollUntilVisible:
+    element:
+      id: "route_card"
+- tapOn:
+    id: "route_card"
+- assertVisible:
+    text: "Paradas"
+    timeout: 15000
+```
+
+**Supported commands**: `launchApp`, `tapOn`, `doubleTapOn`, `longPressOn`, `inputText`, `eraseText`, `assertVisible`, `assertNotVisible`, `extendedWaitUntil`, `scrollUntilVisible`, `swipe`, `back`, `pressKey`, `hideKeyboard`, `waitForAnimationToEnd`, `stopApp`, `clearState`, `openLink`, `runFlow` (inline `commands` or `file:`, with `when: visible/notVisible/platform`), `repeat` (`times` and/or `while:`).
+
+**Composition & parameters** (v1.6):
+
+- `runFlow: segments/_login.yaml` (or `runFlow: {file: ..., env: {...}, when: ...}`) composes flow files; paths resolve relative to the referencing flow, with cycle detection and a nesting limit. Build a library of segments and chain them into `goto-*` / journey flows.
+- `${VAR}` placeholders resolve from the tool's `env` parameter, `runFlow` `env:`, or header `env:` defaults (that precedence order). Unknown variables fail the parse with the available names listed.
+- `repeat: {while: {notVisible: {id: home}}, times: 5, commands: [back]}` repeats while the condition holds (`times` caps iterations, default 10) — ideal for "press back until Home appears".
+
+**Tap safety & chaining** (v1.6.1):
+
+- `tapOn` prefers **clickable** matches when a selector hits several elements (headers/labels often match the same text earlier in the tree — the classic source of silent no-op taps), and the step report warns when the tapped element is not clickable or disabled.
+- `launchApp: {ifNotRunning: true}` skips the relaunch when the app is already in the foreground — chained flows stop re-paying the app start (~10-15s) and the JS runtime (e.g. injected network mocks) is preserved.
+- `doctor` now detects emulators whose `screencap` returns a uniform (black) frame — a known GPU issue where screenshots are useless but the UI tree keeps working.
+
+**Semantics** (divergences from Maestro, by design):
+
+- `text`/`id` selectors match as **case-insensitive substrings** (not exact regex) — consistent with `tap_element` and tolerant to copy changes.
+- Element steps **auto-wait** up to `default_timeout_ms` (default 10s) — no manual sleeps needed.
+- Execution stops at the first non-optional failure and returns the failing step **plus the current UI tree and foreground app**, so the agent can take over exactly where the flow diverged.
+- `dry_run: true` parses and lists the steps without touching a device — useful to validate a flow file.
+- Extensions: selectors also accept `type` (element type substring) and `clickable`; `assertVisible`/`tapOn` accept a per-step `timeout`.
+
+Not supported (v1): `runFlow` with `file:`, JavaScript conditions (`when: true:`), `point` combined with an element selector, and horizontal `scrollUntilVisible`.
+
 ## UI Tree Format
 
 UI trees are returned in a compact one-line-per-element format (~4x fewer tokens than JSON):
