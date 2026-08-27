@@ -2,6 +2,7 @@ import { matchElement } from "../utils/element-matcher.js";
 import { scrollOnce } from "../utils/scroll.js";
 import { waitForStableUiTree } from "../utils/observe.js";
 import { describeSelector } from "./selector.js";
+import { describeNearMisses } from "../utils/similar-elements.js";
 import type { UiElement } from "../types.js";
 import type { FlowCondition, FlowContext, FlowSelector, FlowStep } from "./types.js";
 
@@ -107,7 +108,15 @@ async function tap(
 
   if (!element) {
     const detail = `not found within ${timeoutMs}ms`;
-    return step.optional ? { status: "skipped", detail: `optional, ${detail}` } : { status: "failed", detail };
+    if (step.optional) {
+      return { status: "skipped", detail: `optional, ${detail}` };
+    }
+    // A near-miss is the usual cause of a flow dying mid-way: the copy moved,
+    // or the text sits on a parent that is not the tappable node.
+    return {
+      status: "failed",
+      detail: `${detail}.${await nearMisses(step.selector!, ctx)}`,
+    };
   }
 
   await performTap(step.mode, element.center_x, element.center_y, ctx);
@@ -137,7 +146,17 @@ async function assertVisible(
   const match = await waitForMatch(step.selector, timeoutMs, ctx);
   if (match) return ok();
   const detail = `not visible within ${timeoutMs}ms`;
-  return step.optional ? { status: "skipped", detail: `optional, ${detail}` } : { status: "failed", detail };
+  if (step.optional) return { status: "skipped", detail: `optional, ${detail}` };
+  return { status: "failed", detail: `${detail}.${await nearMisses(step.selector, ctx)}` };
+}
+
+/** Closest labels on the current screen, for a step that could not match. */
+async function nearMisses(
+  selector: FlowSelector,
+  ctx: FlowContext,
+): Promise<string> {
+  const tree = await ctx.driver.getUiTree(ctx.deviceId).catch(() => []);
+  return describeNearMisses(tree, selector.criteria);
 }
 
 async function assertVisibleStrict(
@@ -146,7 +165,11 @@ async function assertVisibleStrict(
   ctx: FlowContext,
 ): Promise<StepOutcome> {
   const match = await waitForMatch(selector, timeoutMs, ctx);
-  return match ? ok() : { status: "failed", detail: `not visible within ${timeoutMs}ms` };
+  if (match) return ok();
+  return {
+    status: "failed",
+    detail: `not visible within ${timeoutMs}ms.${await nearMisses(selector, ctx)}`,
+  };
 }
 
 async function assertNotVisible(
@@ -181,7 +204,10 @@ async function scrollUntilVisible(
     await delay(500);
   } while (Date.now() < deadline);
 
-  return { status: "failed", detail: `not found after ${scrolls} scroll(s) in ${timeoutMs}ms` };
+  return {
+    status: "failed",
+    detail: `not found after ${scrolls} scroll(s) in ${timeoutMs}ms.${await nearMisses(step.selector, ctx)}`,
+  };
 }
 
 async function swipe(
