@@ -165,6 +165,20 @@ appId: com.example.app
 
 Not supported (v1): `runFlow` with `file:`, JavaScript conditions (`when: true:`), `point` combined with an element selector, and horizontal `scrollUntilVisible`.
 
+## Reliability
+
+Behaviour worth knowing, most of it the result of failures measured in real sessions:
+
+- **`platform` is optional.** It is inferred from what is connected, and only required when an Android device and a *booted* iOS simulator are both present. `package` is optional too on `kill_app`, `clear_app_data` and `get_app_info`, defaulting to the foreground app.
+- **Ambiguous device selection fails instead of guessing.** With more than one device attached, tools require `device_id` and list the candidates by kind (emulator / usb / network). A network target is usually a TV on the same Wi-Fi — not the device you meant.
+- **A failed UI dump degrades instead of dead-ending.** `uiautomator` cannot read an animating screen. The dump retries with progressive backoff and a `--compressed` variant; if it still fails, tree-reading tools answer with the reason, the foreground app and a screenshot, so work can continue by coordinates.
+- **Selector failures name near-misses.** "Element not found" lists the closest labels on screen with a similarity score, and flags one that is `[disabled]`, `[not clickable]` or `[under an overlay]`.
+- **`launch_app` verifies the launch.** `monkey`, then the resolved activity, then a plain MAIN/LAUNCHER intent — each checked against the actual foreground app. A wrong package name is answered with the installed look-alikes.
+- **Log reads are capped at the source.** A full `logcat -d` routinely exceeds 10 MB (28 MB measured on a normal emulator) and used to fail every time. `search` runs device-side; `dump_to_file` covers the rare case that needs the whole buffer.
+- **Identical UI trees are not re-sent.** `get_ui_tree` and `get_screen_state` report an unchanged screen with its hash instead of the full tree. The tree is still read every call, so it is a fact, not a cache guess. `force_full` overrides.
+- **Dead frames are refused.** A uniform (black) screenshot returns the emulator GPU fix instead of a useless image, and `doctor` reports API level and GPU backend before a session starts.
+- **The server exits with its client.** A parent-pid watchdog prevents the orphan instances that otherwise accumulate across sessions.
+
 ## UI Tree Format
 
 UI trees are returned in a compact one-line-per-element format (~4x fewer tokens than JSON):

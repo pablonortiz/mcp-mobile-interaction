@@ -43,7 +43,7 @@ import { cleanupOrphanRecordings } from "./platforms/android.js";
 
 const server = new McpServer({
   name: "mcp-mobile-interaction",
-  version: "1.6.1",
+  version: "1.7.0",
 });
 
 registerListDevicesTool(server);

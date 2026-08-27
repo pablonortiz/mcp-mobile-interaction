@@ -12,7 +12,8 @@ import type {
   UiElement,
 } from "../types.js";
 import { annotateOverlays } from "../utils/overlay-detect.js";
-import { writeFile } from "fs/promises";
+import { writeFile, stat } from "fs/promises";
+import { resolve as resolvePath } from "path";
 import { unescapeXml } from "../utils/xml.js";
 
 const DEVICE_CACHE_TTL_MS = 10_000;
@@ -22,12 +23,32 @@ export function resetCaches(): void {
   cachedFirstDevice = undefined;
 }
 
+function isDeviceGoneError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("device offline") ||
+    message.includes("not found") ||
+    message.includes("no devices") ||
+    message.includes("device unauthorized")
+  );
+}
+
 function adb(
   deviceId: string,
   args: string[],
   options?: { timeout?: number; maxBuffer?: number },
 ) {
-  return run("adb", ["-s", deviceId, ...args], options);
+  return run("adb", ["-s", deviceId, ...args], options).catch(
+    (error: unknown) => {
+      // The cached id outlived the device: drop it so the next call re-resolves
+      // instead of failing for another TTL.
+      if (isDeviceGoneError(error) && cachedFirstDevice?.id === deviceId) {
+        resetCaches();
+      }
+      throw error;
+    },
+  );
 }
 
 export async function listDevices(): Promise<Device[]> {
@@ -52,6 +73,19 @@ export async function listDevices(): Promise<Device[]> {
   return devices;
 }
 
+export type DeviceKind = "emulator" | "usb" | "network";
+
+/**
+ * Network-attached targets are the dangerous ones: an Android TV on the same
+ * Wi-Fi shows up in `adb devices` exactly like a phone, and picking it
+ * silently means installing an APK or sending taps to the wrong device.
+ */
+export function classifyDevice(deviceId: string): DeviceKind {
+  if (deviceId.startsWith("emulator-")) return "emulator";
+  if (deviceId.includes(":")) return "network";
+  return "usb";
+}
+
 export async function getFirstDeviceId(): Promise<string> {
   if (
     cachedFirstDevice &&
@@ -65,6 +99,19 @@ export async function getFirstDeviceId(): Promise<string> {
   if (connected.length === 0) {
     throw new Error(
       "No connected Android devices found. Make sure an emulator is running or a device is connected via USB with ADB debugging enabled.",
+    );
+  }
+
+  // Never choose on the user's behalf when the choice can be wrong.
+  if (connected.length > 1) {
+    const listed = connected
+      .map(
+        (device) =>
+          `  ${device.id} (${classifyDevice(device.id)}${device.name && device.name !== device.id ? `, ${device.name}` : ""})`,
+      )
+      .join("\n");
+    throw new Error(
+      `${connected.length} Android devices are connected — pass device_id to say which one:\n${listed}\nNetwork targets are often a TV or a set-top box on the same Wi-Fi, not the device you meant.`,
     );
   }
 
@@ -412,10 +459,37 @@ export async function installApp(
   deviceId: string,
   apkPath: string,
 ): Promise<string> {
-  const output = await run("adb", ["-s", deviceId, "install", "-r", apkPath], {
-    timeout: 120_000,
-  });
-  return output.trim();
+  const provenance = await describeApk(apkPath);
+  try {
+    const output = await run(
+      "adb",
+      ["-s", deviceId, "install", "-r", apkPath],
+      { timeout: 120_000 },
+    );
+    return `${output.trim()}\n${provenance}`;
+  } catch (error) {
+    // Which APK, and how old, is the first thing to check on a failed install
+    // — a stale build or the wrong worktree is a recurring cause.
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}\n${provenance}`,
+    );
+  }
+}
+
+/** Absolute path, size and age of the APK, so a stale build is visible. */
+async function describeApk(apkPath: string): Promise<string> {
+  try {
+    const absolute = resolvePath(apkPath);
+    const info = await stat(absolute);
+    const ageMinutes = Math.round((Date.now() - info.mtimeMs) / 60_000);
+    const age =
+      ageMinutes < 60
+        ? `${ageMinutes} min old`
+        : `${(ageMinutes / 60).toFixed(1)} h old`;
+    return `APK: ${absolute} (${(info.size / 1024 / 1024).toFixed(1)} MB, built ${info.mtime.toISOString()}, ${age})`;
+  } catch {
+    return `APK: ${apkPath} (could not be read — check the path)`;
+  }
 }
 
 export async function uninstallApp(

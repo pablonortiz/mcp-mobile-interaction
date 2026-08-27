@@ -50,8 +50,35 @@ export function registerDoctorTool(server: McpServer) {
           label: "Android devices",
           ok: connected.length > 0,
           detail: connected.length > 0
-            ? connected.map((d) => `${d.name} (${d.id})`).join(", ")
+            ? connected
+                .map(
+                  (d) =>
+                    `${d.name} (${d.id}, ${android.classifyDevice(d.id)})`,
+                )
+                .join(", ")
             : "No connected devices. Boot an emulator or plug in a device with ADB debugging.",
+        });
+
+        const networkTargets = connected.filter(
+          (d) => android.classifyDevice(d.id) === "network",
+        );
+        if (networkTargets.length > 0) {
+          checks.push({
+            label: "Network targets",
+            ok: false,
+            detail: `${networkTargets.map((d) => d.id).join(", ")} are attached over the network — often a TV or set-top box on the same Wi-Fi. Pass device_id explicitly so an install or a tap cannot land there.`,
+          });
+        }
+
+        checks.push({
+          label: "Target selection",
+          ok: connected.length === 1,
+          detail:
+            connected.length === 1
+              ? `${connected[0].id} will be used when device_id is omitted`
+              : connected.length === 0
+                ? "Nothing to select."
+                : `${connected.length} devices connected — device_id is required; tools will refuse to guess.`,
         });
       } catch (e: any) {
         checks.push({ label: "Android devices", ok: false, detail: e.message });

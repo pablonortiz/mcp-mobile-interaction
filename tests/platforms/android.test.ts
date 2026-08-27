@@ -391,9 +391,21 @@ describe("installApp", () => {
     mockRun.mockResolvedValueOnce("Success");
     const output = await androidMod.installApp("dev1", "/tmp/app.apk");
     expect(argsOfCall(0)).toBe("-s dev1 install -r /tmp/app.apk");
-    expect(output).toBe("Success");
+    expect(output).toContain("Success");
   });
-});
+
+  it("reports which APK was used, so a stale build is visible", async () => {
+    mockRun.mockResolvedValueOnce("Success");
+    const output = await androidMod.installApp("dev1", "/tmp/app.apk");
+    expect(output).toContain("APK: /tmp/app.apk");
+  });
+
+  it("keeps the APK provenance on a failed install", async () => {
+    mockRun.mockRejectedValueOnce(new Error("INSTALL_FAILED_INVALID_APK"));
+    await expect(androidMod.installApp("dev1", "/tmp/app.apk")).rejects.toThrow(
+      /INSTALL_FAILED_INVALID_APK[\s\S]*APK: \/tmp\/app.apk/,
+    );
+  });
 
 describe("uninstallApp", () => {
   it("sends adb uninstall", async () => {
