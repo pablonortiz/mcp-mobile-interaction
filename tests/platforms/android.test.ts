@@ -588,13 +588,59 @@ describe("getScreenInfo", () => {
 // launchApp / openUrl
 // ---------------------------------------------------------------------------
 describe("launchApp", () => {
-  it("builds the correct monkey command", async () => {
-    mockRun.mockResolvedValueOnce("");
+  const FOREGROUND_DUMP =
+    "mCurrentFocus=Window{a b com.example.app/com.example.app.MainActivity}";
+
+  it("tries monkey first", async () => {
+    mockRun.mockResolvedValue(FOREGROUND_DUMP);
     await androidMod.launchApp("com.example.app", "dev1");
     expect(argsOfCall(0)).toBe(
       "-s dev1 shell monkey -p com.example.app -c android.intent.category.LAUNCHER 1"
     );
   });
+
+  it("falls back to the resolved activity when monkey fails", async () => {
+    mockRun
+      .mockRejectedValueOnce(new Error("monkey aborted"))
+      .mockResolvedValueOnce("com.example.app/.MainActivity")
+      .mockResolvedValue(FOREGROUND_DUMP);
+    await androidMod.launchApp("com.example.app", "dev1");
+    const startCall = mockRun.mock.calls.find((call) =>
+      (call[1] as string[]).join(" ").includes("am start -n"),
+    );
+    expect(startCall).toBeDefined();
+  }, 20_000);
+
+  it("treats a launch that never reaches the foreground as a failure", async () => {
+    mockRun.mockImplementation(async (_file, args) => {
+      const joined = (args as string[]).join(" ");
+      if (joined.includes("monkey")) return "";
+      if (joined.includes("mCurrentFocus") || joined.includes("dumpsys")) {
+        return "mCurrentFocus=Window{a b com.other.app/.Main}";
+      }
+      throw new Error("not available");
+    });
+    await expect(
+      androidMod.launchApp("com.example.app", "dev1"),
+    ).rejects.toThrow(/Could not launch com.example.app/);
+  }, 20_000);
+
+  it("names installed look-alikes when the package is wrong", async () => {
+    mockRun.mockImplementation(async (_file, args) => {
+      const joined = (args as string[]).join(" ");
+      if (joined.includes("pm list packages")) {
+        return "package:in.janis.wms.beta\npackage:in.janis.wms.qa";
+      }
+      if (joined.includes("monkey")) return "";
+      if (joined.includes("mCurrentFocus") || joined.includes("dumpsys")) {
+        return "mCurrentFocus=Window{a b com.other.app/.Main}";
+      }
+      throw new Error("not available");
+    });
+    await expect(
+      androidMod.launchApp("in.janis.wms.prod", "dev1"),
+    ).rejects.toThrow(/not installed. Installed and similar/);
+  }, 20_000);
 });
 
 describe("openUrl", () => {

@@ -8,6 +8,8 @@ import { filterUiElements } from "../utils/ui-filter.js";
 import { formatUiTree } from "../utils/format-ui.js";
 import { buildResponseContent } from "../utils/format-response.js";
 import { matchElement, describeCriteria, type MatchCriteria } from "../utils/element-matcher.js";
+import { describeNearMisses } from "../utils/similar-elements.js";
+import { describeRuntimeState } from "../utils/runtime-state.js";
 import { READ_ONLY } from "../utils/annotations.js";
 
 export function registerWaitForElementTool(server: McpServer) {
@@ -44,7 +46,7 @@ export function registerWaitForElementTool(server: McpServer) {
         .number()
         .int()
         .optional()
-        .describe("Maximum time to wait in ms. Default: 10000"),
+        .describe("Maximum time to wait in ms. Default: 30000 — app start, first network-backed list load and login flows routinely exceed 10s"),
       poll_interval_ms: z
         .number()
         .int()
@@ -69,7 +71,7 @@ export function registerWaitForElementTool(server: McpServer) {
       observe,
     }) => {
       const driver = getDriver(platform);
-      const timeout = timeout_ms ?? 10_000;
+      const timeout = timeout_ms ?? 30_000;
       const pollInterval = poll_interval_ms ?? 500;
       const start = Date.now();
       const criteria: MatchCriteria = {
@@ -113,7 +115,7 @@ export function registerWaitForElementTool(server: McpServer) {
         content: [
           {
             type: "text" as const,
-            text: `Timeout after ${timeout}ms: no element found matching criteria (${describeCriteria(criteria)}). ${formatUiTree(filtered, "Last UI tree")}`,
+            text: `Timeout after ${timeout}ms: no element found matching criteria (${describeCriteria(criteria)}).${describeNearMisses(lastTree, criteria)}${describeRuntimeState(lastTree)} ${formatUiTree(filtered, "Last UI tree")}`,
           },
         ],
         isError: true,

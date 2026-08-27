@@ -841,20 +841,136 @@ async function getRotation(deviceId: string): Promise<number> {
   }
 }
 
+/**
+ * Launches an app, verifying the result instead of assuming it. `monkey` alone
+ * is fragile — it fails on permissions, on device state, and on apps that do
+ * not declare a LAUNCHER category the way it expects — and a failed launch
+ * means the whole QA session never starts.
+ */
 export async function launchApp(
   packageName: string,
   deviceId?: string,
 ): Promise<void> {
   const id = await resolveDevice(deviceId);
-  await adb(id, [
+  const failures: string[] = [];
+
+  for (const strategy of LAUNCH_STRATEGIES) {
+    try {
+      await strategy(id, packageName);
+      if (await isInForeground(id, packageName)) return;
+      failures.push(`${strategy.name}: ran but the app did not come to front`);
+    } catch (error) {
+      failures.push(
+        `${strategy.name}: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`,
+      );
+    }
+  }
+
+  throw new Error(
+    `Could not launch ${packageName} on ${id}.\n${failures.join("\n")}\n${await suggestInstalledPackages(id, packageName)}`,
+  );
+}
+
+const LAUNCH_STRATEGIES: Array<
+  ((deviceId: string, packageName: string) => Promise<void>) & { name: string }
+> = [
+  async function monkey(deviceId, packageName) {
+    await adb(deviceId, [
+      "shell",
+      "monkey",
+      "-p",
+      packageName,
+      "-c",
+      "android.intent.category.LAUNCHER",
+      "1",
+    ]);
+  },
+  async function resolvedActivity(deviceId, packageName) {
+    const component = await resolveLaunchActivity(deviceId, packageName);
+    if (!component) throw new Error("no launchable activity resolved");
+    await adb(deviceId, ["shell", "am", "start", "-n", component]);
+  },
+  async function mainIntent(deviceId, packageName) {
+    await adb(deviceId, [
+      "shell",
+      "am",
+      "start",
+      "-a",
+      "android.intent.action.MAIN",
+      "-c",
+      "android.intent.category.LAUNCHER",
+      "-p",
+      packageName,
+    ]);
+  },
+];
+
+async function resolveLaunchActivity(
+  deviceId: string,
+  packageName: string,
+): Promise<string | undefined> {
+  const output = await adb(deviceId, [
     "shell",
-    "monkey",
-    "-p",
+    "cmd",
+    "package",
+    "resolve-activity",
+    "--brief",
     packageName,
-    "-c",
-    "android.intent.category.LAUNCHER",
-    "1",
   ]);
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.includes("/"));
+}
+
+const FOREGROUND_POLL_MS = 400;
+const FOREGROUND_ATTEMPTS = 8;
+
+async function isInForeground(
+  deviceId: string,
+  packageName: string,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < FOREGROUND_ATTEMPTS; attempt++) {
+    await delay(FOREGROUND_POLL_MS);
+    try {
+      const foreground = await getForegroundApp(deviceId);
+      if (foreground.package === packageName) return true;
+    } catch {
+      // Keep polling — the window may not be up yet.
+    }
+  }
+  return false;
+}
+
+/** Names look-alike installed packages, which catches the `.beta`/`.qa` typo. */
+async function suggestInstalledPackages(
+  deviceId: string,
+  packageName: string,
+): Promise<string> {
+  try {
+    const stem = packageName.split(".").slice(0, 3).join(".");
+    const output = await adb(deviceId, [
+      "shell",
+      "pm",
+      "list",
+      "packages",
+      stem,
+    ]);
+    const installed = output
+      .split("\n")
+      .map((line) => line.replace("package:", "").trim())
+      .filter(Boolean);
+
+    if (installed.length === 0) {
+      return `No installed package matches "${stem}". Check the package name, or install the APK first.`;
+    }
+    if (!installed.includes(packageName)) {
+      return `${packageName} is not installed. Installed and similar: ${installed.join(", ")}.`;
+    }
+    return `${packageName} is installed, so this is a launch failure rather than a wrong package name.`;
+  } catch {
+    return "";
+  }
 }
 
 export async function openUrl(url: string, deviceId?: string): Promise<void> {

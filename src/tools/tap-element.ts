@@ -6,6 +6,7 @@ import type { UiElement } from "../types.js";
 import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
 import { matchElement, describeCriteria, type MatchCriteria } from "../utils/element-matcher.js";
+import { describeNearMisses } from "../utils/similar-elements.js";
 import { scrollOnce } from "../utils/scroll.js";
 import { ACTION } from "../utils/annotations.js";
 
@@ -158,7 +159,7 @@ export function registerTapElementTool(server: McpServer) {
             content: [
               {
                 type: "text" as const,
-                text: `Element not found after ${scrollLimit} scrolls (${describeCriteria(criteria)}).`,
+                text: `Element not found after ${scrollLimit} scrolls (${describeCriteria(criteria)}).${describeNearMisses(lastTree, criteria)}`,
               },
             ],
             isError: true,
@@ -193,7 +194,7 @@ export function registerTapElementTool(server: McpServer) {
             content: [
               {
                 type: "text" as const,
-                text: `Element not found (${describeCriteria(criteria)}). ${lastTree.length} elements on screen.`,
+                text: `Element not found (${describeCriteria(criteria)}). ${lastTree.length} elements on screen.${describeNearMisses(lastTree, criteria)}`,
               },
             ],
             isError: true,
@@ -216,7 +217,7 @@ export function registerTapElementTool(server: McpServer) {
             content: [
               {
                 type: "text" as const,
-                text: `Element not found (${describeCriteria(criteria)}).`,
+                text: `Element not found (${describeCriteria(criteria)}).${describeNearMisses(lastTree, criteria)}`,
               },
             ],
             isError: true,
