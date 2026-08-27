@@ -63,7 +63,7 @@ export interface PlatformDriver {
   ): Promise<void>;
   setAppearance(deviceId: string, mode: "dark" | "light"): Promise<void>;
   getForegroundApp(deviceId: string): Promise<ForegroundApp>;
-  startRecording(deviceId?: string): Promise<string>;
+  startRecording(deviceId?: string, force?: boolean): Promise<string>;
   stopRecording(deviceId?: string): Promise<string>;
   clearTextField(deviceId?: string, maxChars?: number): Promise<number>;
 }

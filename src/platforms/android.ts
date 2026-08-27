@@ -12,6 +12,7 @@ import type {
   UiElement,
 } from "../types.js";
 import { annotateOverlays } from "../utils/overlay-detect.js";
+import { writeFile } from "fs/promises";
 import { unescapeXml } from "../utils/xml.js";
 
 const DEVICE_CACHE_TTL_MS = 10_000;
@@ -21,7 +22,11 @@ export function resetCaches(): void {
   cachedFirstDevice = undefined;
 }
 
-function adb(deviceId: string, args: string[], options?: { timeout?: number }) {
+function adb(
+  deviceId: string,
+  args: string[],
+  options?: { timeout?: number; maxBuffer?: number },
+) {
   return run("adb", ["-s", deviceId, ...args], options);
 }
 
@@ -255,24 +260,108 @@ const LOG_LEVEL_MAP: Record<string, string> = {
   error: "E",
 };
 
-export async function getLogs(
-  deviceId: string,
-  options: LogOptions,
-): Promise<string> {
+// A full `logcat -d` routinely exceeds exec's maxBuffer (28 MB measured on a
+// normal emulator vs. a 10 MB limit), so reads are always capped at the source.
+const LOGCAT_MAX_BUFFER = 64 * 1024 * 1024;
+const LOGCAT_WINDOW_MULTIPLIER = 40;
+const LOGCAT_MAX_WINDOW = 20_000;
+
+/**
+ * Size of the `-t` window to read. `-t` truncates the buffer *before* filters
+ * apply, so a filtered read must look at more lines than it returns.
+ */
+function logcatWindow(lines: number, filtered: boolean): number {
+  if (!filtered) return lines;
+  return Math.min(lines * LOGCAT_WINDOW_MULTIPLIER, LOGCAT_MAX_WINDOW);
+}
+
+function buildLogcatArgs(options: LogOptions): string[] {
   const args = ["logcat", "-d", "-v", "time"];
   const levelLetter = options.level
     ? (LOG_LEVEL_MAP[options.level] ?? "I")
     : undefined;
+  const lines = options.lines ?? 50;
 
+  // A tag filter runs device-side and cuts the volume by orders of magnitude,
+  // so it needs no window; everything else is filtered after `-t` truncates.
   if (options.tag) {
     args.push("-s", levelLetter ? `${options.tag}:${levelLetter}` : options.tag);
-  } else if (levelLetter) {
-    args.push(`*:${levelLetter}`);
+  } else {
+    args.push("-t", String(logcatWindow(lines, Boolean(levelLetter || options.search))));
+    if (levelLetter) args.push(`*:${levelLetter}`);
   }
 
-  const output = await adb(deviceId, args, { timeout: 30_000 });
+  // Device-side regex keeps the search from being limited by the window.
+  if (options.search) args.push("--regex", options.search);
+
+  return args;
+}
+
+export interface DeviceProfile {
+  apiLevel: number;
+  gpuMode?: string;
+  model?: string;
+  isEmulator: boolean;
+}
+
+/**
+ * Device traits worth knowing before a QA session: API level gates camera
+ * capture (the HAL crashes on <=29) and the GPU backend gates screencap.
+ */
+export async function getDeviceProfile(
+  deviceId: string,
+): Promise<DeviceProfile> {
+  const [sdk, egl, model] = await Promise.all([
+    getProp(deviceId, "ro.build.version.sdk"),
+    getProp(deviceId, "ro.hardware.egl"),
+    getProp(deviceId, "ro.product.model"),
+  ]);
+
+  return {
+    apiLevel: parseInt(sdk, 10) || 0,
+    gpuMode: egl || undefined,
+    model: model || undefined,
+    isEmulator: deviceId.startsWith("emulator-") || model.startsWith("sdk_"),
+  };
+}
+
+async function getProp(deviceId: string, prop: string): Promise<string> {
+  try {
+    const value = await adb(deviceId, ["shell", "getprop", prop], {
+      timeout: 5_000,
+    });
+    return value.trim();
+  } catch {
+    return "";
+  }
+}
+
+export async function getLogs(
+  deviceId: string,
+  options: LogOptions,
+): Promise<string> {
+  const output = await adb(deviceId, buildLogcatArgs(options), {
+    timeout: 30_000,
+    maxBuffer: LOGCAT_MAX_BUFFER,
+  });
   const lines = options.lines ?? 50;
   return output.split("\n").slice(-lines).join("\n");
+}
+
+/**
+ * Dumps the whole logcat buffer to a local file, for the cases a windowed read
+ * cannot serve. Returns the path and the byte count.
+ */
+export async function dumpLogsToFile(
+  deviceId: string,
+  filePath: string,
+): Promise<number> {
+  const output = await adb(deviceId, ["logcat", "-d", "-v", "time"], {
+    timeout: 120_000,
+    maxBuffer: LOGCAT_MAX_BUFFER,
+  });
+  await writeFile(filePath, output, "utf8");
+  return Buffer.byteLength(output, "utf8");
 }
 
 export async function clearLogs(deviceId: string): Promise<void> {
@@ -730,12 +819,53 @@ export async function openUrl(url: string, deviceId?: string): Promise<void> {
 const REMOTE_RECORDING_PATH = "/sdcard/mcp-mobile-recording.mp4";
 const activeRecordings = new Map<string, ChildProcess>();
 
-export async function startRecording(deviceId?: string): Promise<string> {
-  const id = await resolveDevice(deviceId);
-  if (activeRecordings.has(id)) {
-    throw new Error(
-      `A recording is already in progress on ${id}. Stop it first with action: "stop".`,
+/**
+ * Kills `screenrecord` processes left on devices by a previous server instance.
+ * The in-memory map dies with the process, so a device-side check is the only
+ * way to tell a real leftover from a lost handle.
+ */
+export async function cleanupOrphanRecordings(): Promise<void> {
+  try {
+    const devices = await listDevices();
+    await Promise.all(
+      devices
+        .filter((device) => device.status === "device")
+        .filter((device) => !activeRecordings.has(device.id))
+        .map((device) =>
+          adb(device.id, ["shell", "pkill", "-2", "screenrecord"], {
+            timeout: 5_000,
+          }).catch(() => {}),
+        ),
     );
+  } catch {
+    // No adb or no devices — nothing to clean up.
+  }
+}
+
+/** True when the device itself has a `screenrecord` running. */
+export async function isRecordingOnDevice(deviceId: string): Promise<boolean> {
+  try {
+    const output = await adb(deviceId, ["shell", "pidof", "screenrecord"], {
+      timeout: 5_000,
+    });
+    return output.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+export async function startRecording(
+  deviceId?: string,
+  force = false,
+): Promise<string> {
+  const id = await resolveDevice(deviceId);
+  if (activeRecordings.has(id) || (await isRecordingOnDevice(id))) {
+    if (!force) {
+      throw new Error(
+        `A recording is already in progress on ${id}. Stop it first with action: "stop", or pass force: true to discard it and start over.`,
+      );
+    }
+    await discardRecording(id);
   }
 
   const child = spawnProc("adb", [
@@ -760,17 +890,33 @@ export async function startRecording(deviceId?: string): Promise<string> {
   return id;
 }
 
+/** Drops a recording without producing a file — used to recover a stuck device. */
+async function discardRecording(deviceId: string): Promise<void> {
+  const child = activeRecordings.get(deviceId);
+  activeRecordings.delete(deviceId);
+  await adb(deviceId, ["shell", "pkill", "-2", "screenrecord"]).catch(() => {});
+  if (child && child.exitCode === null) await waitForExit(child, 3000);
+  await adb(deviceId, ["shell", "rm", "-f", REMOTE_RECORDING_PATH]).catch(
+    () => {},
+  );
+}
+
 export async function stopRecording(deviceId?: string): Promise<string> {
   const id = await resolveDevice(deviceId);
   const child = activeRecordings.get(id);
-  if (!child) {
+  // The handle can be missing while the device still records — another server
+  // instance started it. Finalize by device-side signal in that case.
+  if (!child && !(await isRecordingOnDevice(id))) {
     throw new Error(
       `No active recording on ${id}. Start one with action: "start".`,
     );
   }
   activeRecordings.delete(id);
 
-  if (child.exitCode === null) {
+  if (!child) {
+    await adb(id, ["shell", "kill -2 $(pidof screenrecord)"]).catch(() => {});
+    await delay(1000);
+  } else if (child.exitCode === null) {
     // SIGINT on the device lets screenrecord finalize the mp4
     await adb(id, ["shell", "kill -2 $(pidof screenrecord)"]).catch(() =>
       child.kill(),

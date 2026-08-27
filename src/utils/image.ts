@@ -77,3 +77,12 @@ function clampRegion(
     height: Math.max(1, Math.min(Math.round(region.height), maxHeight - top)),
   };
 }
+
+/** True when every channel is flat (no pixel variation) — a dead frame. */
+export async function isUniformImage(buffer: Buffer): Promise<boolean> {
+  const { channels } = await sharp(buffer).stats();
+  return channels.every((channel) => channel.stdev < 1);
+}
+
+export const BLACK_FRAME_HINT =
+  "The captured frame has no pixel variation (a black screen). This is a known emulator GPU issue, not an app state: relaunch the emulator with `-gpu swiftshader_indirect`. The UI tree is unaffected — use get_ui_tree meanwhile.";

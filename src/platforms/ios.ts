@@ -634,8 +634,12 @@ export async function openUrl(url: string, deviceId?: string): Promise<void> {
 
 const activeRecordings = new Map<string, { child: ChildProcess; path: string }>();
 
-export async function startRecording(deviceId?: string): Promise<string> {
+export async function startRecording(
+  deviceId?: string,
+  force = false,
+): Promise<string> {
   const id = await resolveDevice(deviceId);
+  if (force) activeRecordings.delete(id);
   if (activeRecordings.has(id)) {
     throw new Error(
       `A recording is already in progress on ${id}. Stop it first with action: "stop".`,

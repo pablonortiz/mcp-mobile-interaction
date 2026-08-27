@@ -386,3 +386,20 @@ function optionalNumber(raw: unknown, where: string): number | undefined {
   if (raw === undefined || raw === null) return undefined;
   return requireNumber(raw, where);
 }
+
+const APP_ID_STEPS = new Set(["launchApp", "stopApp", "clearState"]);
+
+/**
+ * Labels of steps that need an appId and carry none. Checked before execution
+ * so a flow that cannot run fails at parse time instead of mid-way.
+ */
+export function stepsMissingAppId(steps: FlowStep[]): string[] {
+  return steps.flatMap((step) => {
+    if (step.kind === "group" || step.kind === "repeat") {
+      return stepsMissingAppId(step.steps);
+    }
+    const needsAppId = APP_ID_STEPS.has(step.kind);
+    const hasOwnAppId = "appId" in step && Boolean(step.appId);
+    return needsAppId && !hasOwnAppId ? [step.label] : [];
+  });
+}

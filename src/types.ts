@@ -50,4 +50,5 @@ export interface LogOptions {
   tag?: string;
   level?: string;
   lines?: number;
+  search?: string;
 }

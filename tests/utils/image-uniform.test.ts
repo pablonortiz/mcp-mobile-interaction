@@ -1,5 +1,5 @@
 import sharp from "sharp";
-import { isUniformImage } from "../../src/tools/doctor.js";
+import { isUniformImage } from "../../src/utils/image.js";
 
 async function solidPng(r: number, g: number, b: number): Promise<Buffer> {
   return sharp({ create: { width: 8, height: 8, channels: 3, background: { r, g, b } } })

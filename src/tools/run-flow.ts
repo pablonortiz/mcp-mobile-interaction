@@ -8,6 +8,7 @@ import { formatUiTree } from "../utils/format-ui.js";
 import { loadFlow } from "../flow/load.js";
 import { executeFlow } from "../flow/runner.js";
 import { formatFlowReport, formatFlowPlan } from "../flow/report.js";
+import { stepsMissingAppId } from "../flow/parse.js";
 import { ACTION } from "../utils/annotations.js";
 import type { FlowContext, ParsedFlow } from "../flow/types.js";
 
@@ -87,6 +88,18 @@ export function registerRunFlowTool(server: McpServer) {
 
       if (parsed.steps.length === 0) return errorResult("Flow has no steps.");
 
+      // Fail before touching the device: an unresolvable appId used to surface
+      // mid-run, after earlier steps had already changed the app state.
+      const effectiveAppId = app_id ?? parsed.appId;
+      if (!effectiveAppId) {
+        const missing = stepsMissingAppId(parsed.steps);
+        if (missing.length > 0) {
+          return errorResult(
+            `Flow needs an appId for ${missing.length} step(s) (${missing.slice(0, 3).join(", ")}${missing.length > 3 ? ", …" : ""}) and none was given. Set it in the flow header (\`appId: com.example\`), on the step, or via the app_id parameter.`,
+          );
+        }
+      }
+
       if (dry_run) {
         const plan = formatFlowPlan(parsed.steps).join("\n");
         return {
@@ -105,7 +118,7 @@ export function registerRunFlowTool(server: McpServer) {
         platform,
         deviceId: device_id ?? (await driver.getFirstDeviceId()),
         defaultTimeoutMs: default_timeout_ms ?? 10_000,
-        appId: app_id ?? parsed.appId,
+        appId: effectiveAppId,
       };
 
       const started = Date.now();

@@ -1,7 +1,12 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getDriver } from "../platforms/driver.js";
-import { compressScreenshot, type CropRegion } from "../utils/image.js";
+import {
+  compressScreenshot,
+  isUniformImage,
+  BLACK_FRAME_HINT,
+  type CropRegion,
+} from "../utils/image.js";
 import { matchElement } from "../utils/element-matcher.js";
 import { READ_ONLY } from "../utils/annotations.js";
 
@@ -90,6 +95,12 @@ export function registerScreenshotTool(server: McpServer) {
       const effectiveQuality = quality ?? (wantsCrop ? 80 : 50);
 
       const rawBuffer = await driver.screenshot(device_id);
+      if (await isUniformImage(rawBuffer)) {
+        return {
+          content: [{ type: "text" as const, text: BLACK_FRAME_HINT }],
+          isError: true,
+        };
+      }
       const { base64, width, height, nativeWidth, nativeHeight } =
         await compressScreenshot(rawBuffer, {
           quality: effectiveQuality,

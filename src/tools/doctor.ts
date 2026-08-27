@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { existsSync } from "fs";
 import { join } from "path";
-import sharp from "sharp";
+import { isUniformImage } from "../utils/image.js";
 import { run } from "../utils/exec.js";
 import * as android from "../platforms/android.js";
 import * as ios from "../platforms/ios.js";
@@ -81,6 +81,16 @@ export function registerDoctorTool(server: McpServer) {
         const devices = await android.listDevices();
         const first = devices.find((d) => d.status === "device");
         if (first) {
+          const profile = await android.getDeviceProfile(first.id);
+          checks.push({
+            label: "Device profile",
+            ok: profile.apiLevel >= 30,
+            detail:
+              `${first.id} — API ${profile.apiLevel}${profile.gpuMode ? `, GPU ${profile.gpuMode}` : ""}` +
+              (profile.apiLevel <= 29
+                ? ". Camera capture crashes the emulator HAL on API <=29 (SIGSEGV in the JPEG compressor) — use an API 30+ AVD for photo flows."
+                : ""),
+          });
           const uniform = await isUniformImage(await android.screenshot(first.id));
           checks.push({
             label: "Screen capture",
@@ -139,10 +149,4 @@ export function registerDoctorTool(server: McpServer) {
       };
     },
   );
-}
-
-/** True when every channel is flat (no pixel variation) — a dead frame. */
-export async function isUniformImage(buffer: Buffer): Promise<boolean> {
-  const { channels } = await sharp(buffer).stats();
-  return channels.every((channel) => channel.stdev < 1);
 }

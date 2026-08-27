@@ -1,5 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { tmpdir } from "os";
+import { join } from "path";
 import * as android from "../platforms/android.js";
 import { getDriver } from "../platforms/driver.js";
 
@@ -36,8 +38,12 @@ export function registerGetDeviceLogsTool(server: McpServer) {
         .boolean()
         .optional()
         .describe("Clear the log buffer before reading (Android only). Useful to capture only new logs from this point forward. Default: false"),
+      dump_to_file: z
+        .boolean()
+        .optional()
+        .describe("Android only. Write the entire log buffer to a local file and return its path plus a summary, instead of returning log lines. Use when the windowed read is not enough. Default: false"),
     },
-    async ({ platform, device_id, tag, search, level, lines, clear }) => {
+    async ({ platform, device_id, tag, search, level, lines, clear, dump_to_file }) => {
       const driver = getDriver(platform);
       const deviceId = device_id ?? (await driver.getFirstDeviceId());
 
@@ -62,10 +68,26 @@ export function registerGetDeviceLogsTool(server: McpServer) {
         }
       }
 
-      let logOutput = await driver.getLogs(deviceId, { tag, level, lines });
+      if (dump_to_file && platform === "android") {
+        const filePath = join(tmpdir(), `logcat-${deviceId.replace(/[^\w.-]/g, "_")}-${process.pid}.log`);
+        const bytes = await android.dumpLogsToFile(deviceId, filePath);
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Full log buffer written to ${filePath} (${(bytes / 1024 / 1024).toFixed(1)} MB). Read or grep that file directly.`,
+          }],
+        };
+      }
 
-      // Apply search filter
-      if (search) {
+      // Android filters device-side; iOS has no equivalent, so it filters here.
+      let logOutput = await driver.getLogs(deviceId, {
+        tag,
+        level,
+        lines,
+        search: platform === "android" ? search : undefined,
+      });
+
+      if (search && platform !== "android") {
         const searchLower = search.toLowerCase();
         const filtered = logOutput
           .split("\n")

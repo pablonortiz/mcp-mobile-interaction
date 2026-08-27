@@ -280,7 +280,7 @@ describe("getLogs", () => {
     const logLines = Array.from({ length: 100 }, (_, i) => `line ${i}`).join("\n");
     mockRun.mockResolvedValueOnce(logLines);
     const output = await androidMod.getLogs("dev1", { lines: 10 });
-    expect(argsOfCall(0)).toBe("-s dev1 logcat -d -v time");
+    expect(argsOfCall(0)).toBe("-s dev1 logcat -d -v time -t 10");
     expect(output.split("\n")).toHaveLength(10);
     expect(output).toContain("line 99");
     expect(output).not.toContain("line 89\n");
@@ -295,7 +295,39 @@ describe("getLogs", () => {
   it("uses global level filter when only level is provided", async () => {
     mockRun.mockResolvedValueOnce("error log");
     await androidMod.getLogs("dev1", { level: "error", lines: 20 });
-    expect(argsOfCall(0)).toBe("-s dev1 logcat -d -v time *:E");
+    expect(argsOfCall(0)).toBe("-s dev1 logcat -d -v time -t 800 *:E");
+  });
+
+  it("widens the -t window when a filter runs after the truncation", async () => {
+    mockRun.mockResolvedValueOnce("");
+    await androidMod.getLogs("dev1", { level: "error", lines: 50 });
+    // `-t` truncates before filters apply, so a filtered read must look further back
+    expect(argsOfCall(0)).toContain("-t 2000");
+  });
+
+  it("caps the window so the read cannot exceed maxBuffer", async () => {
+    mockRun.mockResolvedValueOnce("");
+    await androidMod.getLogs("dev1", { level: "error", lines: 500 });
+    expect(argsOfCall(0)).toContain("-t 20000");
+  });
+
+  it("omits -t when a tag filter already reduces volume device-side", async () => {
+    mockRun.mockResolvedValueOnce("");
+    await androidMod.getLogs("dev1", { tag: "ReactNativeJS", lines: 50 });
+    expect(argsOfCall(0)).toBe("-s dev1 logcat -d -v time -s ReactNativeJS");
+  });
+
+  it("pushes search to the device as a regex", async () => {
+    mockRun.mockResolvedValueOnce("");
+    await androidMod.getLogs("dev1", { search: "Fatal", lines: 50 });
+    expect(argsOfCall(0)).toContain("--regex Fatal");
+  });
+
+  it("raises maxBuffer well above the default for log reads", async () => {
+    mockRun.mockResolvedValueOnce("");
+    await androidMod.getLogs("dev1", { lines: 50 });
+    const opts = mockRun.mock.calls[0]?.[2] as { maxBuffer?: number };
+    expect(opts.maxBuffer).toBeGreaterThan(10 * 1024 * 1024);
   });
 });
 

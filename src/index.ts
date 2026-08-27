@@ -38,6 +38,8 @@ import { registerRotateDeviceTool } from "./tools/rotate-device.js";
 import { registerClearTextTool } from "./tools/clear-text.js";
 import { registerDoctorTool } from "./tools/doctor.js";
 import { registerRunFlowTool } from "./tools/run-flow.js";
+import { startParentWatchdog } from "./utils/watchdog.js";
+import { cleanupOrphanRecordings } from "./platforms/android.js";
 
 const server = new McpServer({
   name: "mcp-mobile-interaction",
@@ -81,6 +83,9 @@ registerDoctorTool(server);
 registerRunFlowTool(server);
 
 async function main() {
+  startParentWatchdog(() => cleanupOrphanRecordings());
+  await cleanupOrphanRecordings();
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("mcp-mobile-interaction server running on stdio");

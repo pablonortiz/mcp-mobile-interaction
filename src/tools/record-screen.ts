@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getDriver } from "../platforms/driver.js";
+import * as android from "../platforms/android.js";
 import { ACTION } from "../utils/annotations.js";
 
 export function registerRecordScreenTool(server: McpServer) {
@@ -14,15 +15,35 @@ export function registerRecordScreenTool(server: McpServer) {
         .optional()
         .describe("Device ID. Omit to use the first connected device."),
       action: z
-        .enum(["start", "stop"])
-        .describe('"start" to begin recording, "stop" to finish and retrieve the video'),
+        .enum(["start", "stop", "status"])
+        .describe('"start" to begin recording, "stop" to finish and retrieve the video, "status" to check without changing anything'),
+      force: z
+        .boolean()
+        .optional()
+        .describe("With action \"start\": discard a recording already in progress instead of failing. Default: false"),
     },
     ACTION,
-    async ({ platform, device_id, action }) => {
+    async ({ platform, device_id, action, force }) => {
       const driver = getDriver(platform);
 
+      if (action === "status") {
+        const deviceId = device_id ?? (await driver.getFirstDeviceId());
+        const recording =
+          platform === "android"
+            ? await android.isRecordingOnDevice(deviceId)
+            : false;
+        return {
+          content: [{
+            type: "text" as const,
+            text: recording
+              ? `A recording is in progress on ${deviceId}. Use action: "stop" to finalize it, or action: "start" with force: true to discard it.`
+              : `No recording in progress on ${deviceId}.`,
+          }],
+        };
+      }
+
       if (action === "start") {
-        const deviceId = await driver.startRecording(device_id);
+        const deviceId = await driver.startRecording(device_id, force);
         return {
           content: [{
             type: "text" as const,
