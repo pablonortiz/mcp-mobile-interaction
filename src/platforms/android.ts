@@ -14,7 +14,7 @@ import type {
 import { annotateOverlays } from "../utils/overlay-detect.js";
 import { writeFile, stat } from "fs/promises";
 import { resolve as resolvePath } from "path";
-import { unescapeXml } from "../utils/xml.js";
+import { unescapeXml, isIconGlyph } from "../utils/xml.js";
 
 const DEVICE_CACHE_TTL_MS = 10_000;
 let cachedFirstDevice: { id: string; timestamp: number } | undefined;
@@ -794,6 +794,11 @@ function dumpUi(
   return dumpUiViaTty(deviceId, mode === "compressed");
 }
 
+/** Icon-font glyphs carry no readable meaning, so they are not text. */
+function dropIconGlyphs(text: string): string {
+  return isIconGlyph(text) ? "" : text;
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -877,7 +882,7 @@ function parseUiXml(xml: string): UiElement[] {
     elements.push({
       index,
       type,
-      text: unescapeXml(displayText),
+      text: dropIconGlyphs(unescapeXml(displayText)),
       bounds: {
         x: x1,
         y: y1,

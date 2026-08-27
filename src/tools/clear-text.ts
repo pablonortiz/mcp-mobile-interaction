@@ -27,7 +27,7 @@ export function registerClearTextTool(server: McpServer) {
         .optional()
         .describe("Fallback number of deletions when the field length cannot be determined. Default: 100 (Android) / 50 (iOS)"),
       observe: z
-        .enum(["none", "ui_tree", "screenshot", "both"])
+        .enum(["none", "ui_tree", "screenshot", "both", "on_change"])
         .optional()
         .describe("Capture screen state after clearing. Default: none"),
       observe_delay_ms: z

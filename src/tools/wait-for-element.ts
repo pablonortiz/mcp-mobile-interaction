@@ -57,7 +57,7 @@ export function registerWaitForElementTool(server: McpServer) {
         .optional()
         .describe("Polling interval in ms. Default: 500"),
       observe: z
-        .enum(["none", "ui_tree", "screenshot", "both"])
+        .enum(["none", "ui_tree", "screenshot", "both", "on_change"])
         .optional()
         .describe("Additional observation after element found. Default: none"),
     },

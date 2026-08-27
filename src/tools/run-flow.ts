@@ -61,7 +61,7 @@ export function registerRunFlowTool(server: McpServer) {
         .optional()
         .describe("If true, only parse and list the steps — no device needed"),
       observe: z
-        .enum(["none", "ui_tree", "screenshot", "both"])
+        .enum(["none", "ui_tree", "screenshot", "both", "on_change"])
         .optional()
         .describe("Capture screen state after a successful run. Default: none"),
     },

@@ -11,6 +11,7 @@ import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
 import { matchElement, describeCriteria, type MatchCriteria } from "../utils/element-matcher.js";
 import { describeNearMisses } from "../utils/similar-elements.js";
+import { findFreePoint } from "../utils/free-point.js";
 import { scrollOnce } from "../utils/scroll.js";
 import { ACTION } from "../utils/annotations.js";
 
@@ -29,6 +30,14 @@ function pickTarget(
   return matches.find((el) => el.clickable) ?? matches[0];
 }
 
+/** Something identifiable for an overlay that often has neither text nor id. */
+function describeOverlay(overlay: UiElement): string {
+  const name = overlay.text || overlay.resource_id;
+  if (name) return `"${name}"`;
+  const { x, y, width, height } = overlay.bounds;
+  return `a ${overlay.type} at [${x},${y}][${x + width},${y + height}]`;
+}
+
 function contains(outer: UiElement, x: number, y: number): boolean {
   return (
     x >= outer.bounds.x &&
@@ -38,14 +47,19 @@ function contains(outer: UiElement, x: number, y: number): boolean {
   );
 }
 
-/** True when one element's bounds fully enclose the other's — a parent or child. */
-function isNested(first: UiElement, second: UiElement): boolean {
-  const encloses = (outer: UiElement, inner: UiElement) =>
+/**
+ * True when `inner` sits entirely within `outer`. Checked in one direction
+ * only: a candidate contained in the target is one of its own children, while
+ * one that encloses the target and is drawn later is a scrim over it — the
+ * target's ancestors appear before it in the dump, never after.
+ */
+function isContainedIn(inner: UiElement, outer: UiElement): boolean {
+  return (
     inner.bounds.x >= outer.bounds.x &&
     inner.bounds.y >= outer.bounds.y &&
     inner.bounds.x + inner.bounds.width <= outer.bounds.x + outer.bounds.width &&
-    inner.bounds.y + inner.bounds.height <= outer.bounds.y + outer.bounds.height;
-  return encloses(first, second) || encloses(second, first);
+    inner.bounds.y + inner.bounds.height <= outer.bounds.y + outer.bounds.height
+  );
 }
 
 /**
@@ -66,7 +80,7 @@ function findCoveringOverlay(
     if (el.is_overlay) return true;
     // Later in the dump means drawn on top; nested elements are the target's
     // own parents and children, not something covering it.
-    return el.clickable && index > targetIndex && !isNested(el, target);
+    return el.clickable && index > targetIndex && !isContainedIn(el, target);
   });
 }
 
@@ -120,7 +134,7 @@ export function registerTapElementTool(server: McpServer) {
         .optional()
         .describe("Max wait time when wait_for is true. Default: 10000"),
       observe: z
-        .enum(["none", "ui_tree", "screenshot", "both"])
+        .enum(["none", "ui_tree", "screenshot", "both", "on_change"])
         .optional()
         .describe("Capture screen state after tapping. Default: none"),
       observe_delay_ms: z
@@ -267,15 +281,28 @@ export function registerTapElementTool(server: McpServer) {
           "Warning: the element is disabled (enabled=false) — the tap may have no effect.",
         );
       }
+      // Aim away from whatever covers the element rather than reporting the
+      // problem and tapping into it anyway.
+      let tapX = target.center_x;
+      let tapY = target.center_y;
       const overlay = findCoveringOverlay(lastTree, target);
       if (overlay && !target.is_overlay) {
-        warnings.push(
-          `Warning: "${overlay.text || overlay.resource_id || overlay.type}" is drawn over the tap point (${target.center_x}, ${target.center_y}) and will likely receive the tap instead. Dismiss it first, or pass explicit coordinates on a free part of the element.`,
-        );
+        const label = describeOverlay(overlay);
+        const free = findFreePoint(target, overlay);
+        if (free) {
+          tapX = free.x;
+          tapY = free.y;
+          warnings.push(
+            `Note: ${label} covers the element's centre, so the tap was aimed at (${tapX}, ${tapY}) instead — still inside the element, clear of the cover.`,
+          );
+        } else {
+          warnings.push(
+            `Warning: ${label} covers this element entirely and will receive the tap. Dismiss it first (dismiss_dev_overlays handles React Native's LogBox).`,
+          );
+        }
       }
 
-      // Tap the element's center
-      await driver.tap(target.center_x, target.center_y, device_id);
+      await driver.tap(tapX, tapY, device_id);
 
       const observation = await performObservation({
         mode: observe ?? "none",
@@ -283,11 +310,12 @@ export function registerTapElementTool(server: McpServer) {
         deviceId: device_id,
         delayMs: observe_delay_ms ?? 500,
         stabilize: observe_stabilize,
+        previousTree: lastTree,
       });
 
       const label = target.text || target.resource_id || target.type;
       const confirmation = [
-        `Tapped element "${label}" (${target.type}) at (${target.center_x}, ${target.center_y}) on ${platform} device`,
+        `Tapped element "${label}" (${target.type}) at (${tapX}, ${tapY}) on ${platform} device`,
         ...warnings,
       ].join("\n");
 

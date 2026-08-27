@@ -8,6 +8,7 @@ import { getDriver } from "../platforms/driver.js";
 import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
 import { ACTION } from "../utils/annotations.js";
+import { verifyTypedText } from "../utils/verify-input.js";
 
 export function registerTypeTextTool(server: McpServer) {
   server.tool(
@@ -21,9 +22,9 @@ export function registerTypeTextTool(server: McpServer) {
         .describe("Device ID. Omit to use the first connected device."),
       text: z.string().describe("Text to type"),
       observe: z
-        .enum(["none", "ui_tree", "screenshot", "both"])
+        .enum(["none", "ui_tree", "screenshot", "both", "on_change"])
         .optional()
-        .describe("Capture screen state after action. Default: none"),
+        .describe('Capture screen state after the action. "on_change" returns the first tree that differs from the one before the action — use it to catch a toast or a transient error that a fixed delay would miss. Default: none'),
       observe_delay_ms: z
         .number()
         .int()
@@ -33,11 +34,20 @@ export function registerTypeTextTool(server: McpServer) {
         .boolean()
         .optional()
         .describe("If true, wait for UI to stabilize instead of fixed delay. Default: false"),
+      verify: z
+        .boolean()
+        .optional()
+        .describe("Re-read the focused field afterwards and warn if the text did not land. Default: true"),
     },
     ACTION,
-    async ({ platform: platformArg, device_id, text, observe, observe_delay_ms, observe_stabilize }) => {
+    async ({ platform: platformArg, device_id, text, observe, observe_delay_ms, observe_stabilize, verify }) => {
       const platform = await resolvePlatform(platformArg);
       const method = await getDriver(platform).typeText(text, device_id);
+
+      const verification =
+        verify === false
+          ? undefined
+          : await verifyTypedText(platform, device_id, text);
 
       const observation = await performObservation({
         mode: observe ?? "none",
@@ -53,11 +63,20 @@ export function registerTypeTextTool(server: McpServer) {
           ? " (delivered via clipboard paste — text contains non-ASCII characters; device clipboard was overwritten)"
           : "";
 
+      const verdict = !verification
+        ? ""
+        : verification.ok
+          ? verification.note
+            ? `\n(${verification.note})`
+            : "\nVerified: the field now contains this text."
+          : `\nWarning: the text did not land — ${verification.note}.`;
+
       return {
         content: buildResponseContent(
-          `Typed "${preview}" on ${platform} device${methodNote}`,
+          `Typed "${preview}" on ${platform} device${methodNote}${verdict}`,
           observation,
         ),
+        ...(verification && !verification.ok ? { isError: true } : {}),
       };
     },
   );

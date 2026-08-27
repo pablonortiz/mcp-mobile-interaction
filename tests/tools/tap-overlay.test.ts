@@ -49,11 +49,28 @@ beforeEach(() => {
 });
 
 describe("tap_element overlay detection", () => {
-  it("warns when a later clickable element covers the tap point", async () => {
+  it("aims clear of a cover instead of tapping into it", async () => {
     mockGetUiTree.mockResolvedValue([CARD, CARD_LABEL, LOGBOX]);
     const result = await callTool(tool, { text_contains: "Control de inventario" });
     expect(textOf(result)).toContain("Open debugger to view warnings.");
-    expect(textOf(result)).toContain("will likely receive the tap instead");
+    expect(textOf(result)).toContain("the tap was aimed at");
+    // The free strip above the banner: y 1861..2006 inside the card.
+    expect(mockTap).toHaveBeenCalledWith(799, 1934, undefined);
+  });
+
+  it("gives up and says so when the cover leaves no free area", async () => {
+    const fullCover = makeElement("blocking sheet", { x: 0, y: 0, width: 1080, height: 2400 });
+    mockGetUiTree.mockResolvedValue([CARD, CARD_LABEL, fullCover]);
+    const result = await callTool(tool, { text_contains: "Control de inventario" });
+    expect(textOf(result)).toContain("covers this element entirely");
+    expect(textOf(result)).toContain("dismiss_dev_overlays");
+  });
+
+  it("names an unlabelled cover by its bounds", async () => {
+    const anonymous = makeElement("", { x: 26, y: 2006, width: 1028, height: 125 });
+    mockGetUiTree.mockResolvedValue([CARD, CARD_LABEL, anonymous]);
+    const result = await callTool(tool, { text_contains: "Control de inventario" });
+    expect(textOf(result)).toContain("[26,2006][1054,2131]");
   });
 
   it("does not mistake the element's own children for a cover", async () => {
@@ -75,8 +92,8 @@ describe("tap_element overlay detection", () => {
     expect(textOf(result)).not.toContain("drawn over");
   });
 
-  it("still taps, so the warning informs rather than blocks", async () => {
-    mockGetUiTree.mockResolvedValue([CARD, CARD_LABEL, LOGBOX]);
+  it("taps the plain centre when nothing is in the way", async () => {
+    mockGetUiTree.mockResolvedValue([CARD, CARD_LABEL]);
     await callTool(tool, { text_contains: "Control de inventario" });
     expect(mockTap).toHaveBeenCalledWith(799, 2020.5, undefined);
   });

@@ -48,7 +48,7 @@ export function registerWaitForElementGoneTool(server: McpServer) {
         .optional()
         .describe("Polling interval in ms. Default: 500"),
       observe: z
-        .enum(["none", "ui_tree", "screenshot", "both"])
+        .enum(["none", "ui_tree", "screenshot", "both", "on_change"])
         .optional()
         .describe("Capture screen state after element disappears. Default: none"),
     },

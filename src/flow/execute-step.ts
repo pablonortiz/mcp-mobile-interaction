@@ -3,6 +3,7 @@ import { scrollOnce } from "../utils/scroll.js";
 import { waitForStableUiTree } from "../utils/observe.js";
 import { describeSelector } from "./selector.js";
 import { describeNearMisses } from "../utils/similar-elements.js";
+import { readTree, invalidateTree } from "./tree-cache.js";
 import type { UiElement } from "../types.js";
 import type { FlowCondition, FlowContext, FlowSelector, FlowStep } from "./types.js";
 
@@ -14,8 +15,22 @@ export interface StepOutcome {
 const POLL_MS = 400;
 const SCROLL_TIMEOUT_MS = 20_000;
 
+/** Steps that only read the screen — their cached tree stays valid afterwards. */
+const READ_ONLY_STEPS = new Set([
+  "assertVisible",
+  "assertNotVisible",
+  "waitUntil",
+  "waitForAnimationToEnd",
+]);
+
 /** Executes a single non-structural step (group/repeat are handled by the runner). */
 export async function executeStep(step: FlowStep, ctx: FlowContext): Promise<StepOutcome> {
+  const outcome = await runStep(step, ctx);
+  if (!READ_ONLY_STEPS.has(step.kind)) invalidateTree(ctx);
+  return outcome;
+}
+
+async function runStep(step: FlowStep, ctx: FlowContext): Promise<StepOutcome> {
   switch (step.kind) {
     case "launchApp":
       return launchApp(step, ctx);
@@ -67,7 +82,7 @@ export async function evaluateCondition(when: FlowCondition, ctx: FlowContext): 
   if (when.platform !== undefined && when.platform !== ctx.platform) return false;
 
   if (when.visible || when.notVisible) {
-    const tree = await ctx.driver.getUiTree(ctx.deviceId);
+    const tree = await readTree(ctx);
     if (when.visible && findMatch(tree, when.visible) === undefined) return false;
     if (when.notVisible && findMatch(tree, when.notVisible) !== undefined) return false;
   }
@@ -155,7 +170,7 @@ async function nearMisses(
   selector: FlowSelector,
   ctx: FlowContext,
 ): Promise<string> {
-  const tree = await ctx.driver.getUiTree(ctx.deviceId).catch(() => []);
+  const tree = await readTree(ctx).catch(() => []);
   return describeNearMisses(tree, selector.criteria);
 }
 
@@ -179,8 +194,10 @@ async function assertNotVisible(
 ): Promise<StepOutcome> {
   const deadline = Date.now() + timeoutMs;
   do {
-    const tree = await ctx.driver.getUiTree(ctx.deviceId);
+    const tree = await readTree(ctx);
     if (findMatch(tree, selector) === undefined) return ok();
+    // Still there: only a fresh read can show it gone.
+    invalidateTree(ctx);
     await delay(POLL_MS);
   } while (Date.now() < deadline);
   return { status: "failed", detail: `still visible after ${timeoutMs}ms (${describeSelector(selector)})` };
@@ -195,11 +212,12 @@ async function scrollUntilVisible(
   let scrolls = 0;
 
   do {
-    const tree = await ctx.driver.getUiTree(ctx.deviceId);
+    const tree = await readTree(ctx);
     if (findMatch(tree, step.selector) !== undefined) {
       return ok(scrolls > 0 ? `after ${scrolls} scroll(s)` : undefined);
     }
     await scrollOnce(ctx.platform, step.direction, ctx.deviceId);
+    invalidateTree(ctx);
     scrolls++;
     await delay(500);
   } while (Date.now() < deadline);
@@ -240,9 +258,12 @@ async function waitForMatch(
 ): Promise<UiElement | undefined> {
   const deadline = Date.now() + timeoutMs;
   do {
-    const tree = await ctx.driver.getUiTree(ctx.deviceId);
+    const tree = await readTree(ctx);
     const match = findMatch(tree, selector, preferClickable);
     if (match) return match;
+    // A miss means the screen has to change for this to succeed — never poll
+    // the same cached tree twice.
+    invalidateTree(ctx);
     await delay(POLL_MS);
   } while (Date.now() < deadline);
   return undefined;

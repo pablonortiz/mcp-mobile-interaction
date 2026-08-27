@@ -25,9 +25,9 @@ export function registerLaunchAppTool(server: McpServer) {
           "App package name (Android, e.g. com.example.app) or bundle ID (iOS, e.g. com.apple.mobilesafari)",
         ),
       observe: z
-        .enum(["none", "ui_tree", "screenshot", "both"])
+        .enum(["none", "ui_tree", "screenshot", "both", "on_change"])
         .optional()
-        .describe("Capture screen state after action. Default: none"),
+        .describe('Capture screen state after the action. "on_change" returns the first tree that differs from the one before the action — use it to catch a toast or a transient error that a fixed delay would miss. Default: none'),
       observe_delay_ms: z
         .number()
         .int()

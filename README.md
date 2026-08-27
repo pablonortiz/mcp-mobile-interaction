@@ -114,6 +114,7 @@ All tools accept a `platform` parameter (`"android"` or `"ios"`) and an optional
 
 | Tool | Description |
 |------|-------------|
+| `dismiss_dev_overlays` | Close React Native LogBox overlays that intercept taps aimed at the app underneath |
 | `run_flow` | Run a declarative multi-step flow server-side in a single call — deterministic sequences (login, navigation) stop costing one LLM round-trip per tap |
 
 Flows use a subset of [Maestro's](https://docs.maestro.dev) YAML syntax, so they migrate to Maestro almost 1:1 if you later want a standalone e2e suite. Pass the flow as `flow_yaml` (inline YAML), `flow_file` (path to a versioned `.yaml`), or `steps` (JSON array).
@@ -177,6 +178,11 @@ Behaviour worth knowing, most of it the result of failures measured in real sess
 - **Log reads are capped at the source.** A full `logcat -d` routinely exceeds 10 MB (28 MB measured on a normal emulator) and used to fail every time. `search` runs device-side; `dump_to_file` covers the rare case that needs the whole buffer.
 - **Identical UI trees are not re-sent.** `get_ui_tree` and `get_screen_state` report an unchanged screen with its hash instead of the full tree. The tree is still read every call, so it is a fact, not a cache guess. `force_full` overrides.
 - **Dead frames are refused.** A uniform (black) screenshot returns the emulator GPU fix instead of a useless image, and `doctor` reports API level and GPU backend before a session starts.
+- **Taps aim clear of whatever covers the element.** When something is drawn over the target's centre, the tap moves to a free part of the element instead of firing into the cover; only a full cover is refused, pointing at `dismiss_dev_overlays`.
+- **`type_text` verifies what it wrote.** `uiautomator` reports a field's hint in the same attribute as its content, so an unchanged field cannot be read as "empty" — the tool re-reads the focused field and says plainly whether the text landed.
+- **Icon-font glyphs are not text.** Private Use Area codepoints render as blank everywhere but the device; they no longer pass the "has text" filter as empty strings.
+- **`observe: "on_change"`** returns the first screen that differs from the one before the action, which catches a toast a fixed delay would miss.
+- **Flows reuse an unchanged tree.** A dump costs ~2s; `assertVisible: X` followed by `tapOn: X` now pays for it once. Anything that touches the device invalidates it.
 - **The server exits with its client.** A parent-pid watchdog prevents the orphan instances that otherwise accumulate across sessions.
 
 ## UI Tree Format
