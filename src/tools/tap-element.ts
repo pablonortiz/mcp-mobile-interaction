@@ -29,19 +29,45 @@ function pickTarget(
   return matches.find((el) => el.clickable) ?? matches[0];
 }
 
+function contains(outer: UiElement, x: number, y: number): boolean {
+  return (
+    x >= outer.bounds.x &&
+    x <= outer.bounds.x + outer.bounds.width &&
+    y >= outer.bounds.y &&
+    y <= outer.bounds.y + outer.bounds.height
+  );
+}
+
+/** True when one element's bounds fully enclose the other's — a parent or child. */
+function isNested(first: UiElement, second: UiElement): boolean {
+  const encloses = (outer: UiElement, inner: UiElement) =>
+    inner.bounds.x >= outer.bounds.x &&
+    inner.bounds.y >= outer.bounds.y &&
+    inner.bounds.x + inner.bounds.width <= outer.bounds.x + outer.bounds.width &&
+    inner.bounds.y + inner.bounds.height <= outer.bounds.y + outer.bounds.height;
+  return encloses(first, second) || encloses(second, first);
+}
+
+/**
+ * Finds what would actually receive the tap. Beyond full-screen scrims, any
+ * clickable element drawn after the target and overlapping the tap point wins
+ * it — React Native's LogBox banner is the everyday case: a thin strip over
+ * the bottom of every debug build, which silently eats taps.
+ */
 function findCoveringOverlay(
   tree: UiElement[],
   target: UiElement,
 ): UiElement | undefined {
-  return tree.find(
-    (el) =>
-      el !== target &&
-      el.is_overlay &&
-      target.center_x >= el.bounds.x &&
-      target.center_x <= el.bounds.x + el.bounds.width &&
-      target.center_y >= el.bounds.y &&
-      target.center_y <= el.bounds.y + el.bounds.height,
-  );
+  const targetIndex = tree.indexOf(target);
+
+  return tree.find((el, index) => {
+    if (el === target) return false;
+    if (!contains(el, target.center_x, target.center_y)) return false;
+    if (el.is_overlay) return true;
+    // Later in the dump means drawn on top; nested elements are the target's
+    // own parents and children, not something covering it.
+    return el.clickable && index > targetIndex && !isNested(el, target);
+  });
 }
 
 export function registerTapElementTool(server: McpServer) {
@@ -244,7 +270,7 @@ export function registerTapElementTool(server: McpServer) {
       const overlay = findCoveringOverlay(lastTree, target);
       if (overlay && !target.is_overlay) {
         warnings.push(
-          `Warning: an overlay/scrim (${overlay.resource_id ?? "unnamed"}) covers this element — the tap may hit the overlay instead. Dismiss it first if the tap has no effect.`,
+          `Warning: "${overlay.text || overlay.resource_id || overlay.type}" is drawn over the tap point (${target.center_x}, ${target.center_y}) and will likely receive the tap instead. Dismiss it first, or pass explicit coordinates on a free part of the element.`,
         );
       }
 
