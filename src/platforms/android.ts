@@ -23,15 +23,39 @@ export function resetCaches(): void {
   cachedFirstDevice = undefined;
 }
 
+/** Names what is actually attached, so a wrong device_id is obvious. */
+async function describeAvailableDevices(wanted: string): Promise<string> {
+  try {
+    const devices = await listDevices();
+    const connected = devices.filter((device) => device.status === "device");
+    if (connected.length === 0) {
+      return "No Android devices are connected. Boot an emulator or plug in a device.";
+    }
+    return `${wanted} is not attached. Connected: ${connected
+      .map((device) => `${device.id} (${classifyDevice(device.id)})`)
+      .join(", ")}.`;
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Only adb's own "the device is gone" messages. A bare "not found" also comes
+ * from a missing shell command on the device, which must not be mistaken for
+ * a disconnect.
+ */
+const DEVICE_GONE_PATTERNS = [
+  /device '[^']*' not found/,
+  /device offline/,
+  /no devices\/emulators found/,
+  /device unauthorized/,
+  /device still connecting/,
+];
+
 function isDeviceGoneError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const message = error.message.toLowerCase();
-  return (
-    message.includes("device offline") ||
-    message.includes("not found") ||
-    message.includes("no devices") ||
-    message.includes("device unauthorized")
-  );
+  return DEVICE_GONE_PATTERNS.some((pattern) => pattern.test(message));
 }
 
 function adb(
@@ -39,14 +63,15 @@ function adb(
   args: string[],
   options?: { timeout?: number; maxBuffer?: number },
 ) {
-  return run("adb", ["-s", deviceId, ...args], options).catch(
-    (error: unknown) => {
+  return Promise.resolve(run("adb", ["-s", deviceId, ...args], options)).catch(
+    async (error: unknown) => {
+      if (!isDeviceGoneError(error)) throw error;
       // The cached id outlived the device: drop it so the next call re-resolves
       // instead of failing for another TTL.
-      if (isDeviceGoneError(error) && cachedFirstDevice?.id === deviceId) {
-        resetCaches();
-      }
-      throw error;
+      if (cachedFirstDevice?.id === deviceId) resetCaches();
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}\n${await describeAvailableDevices(deviceId)}`,
+      );
     },
   );
 }
@@ -125,8 +150,16 @@ async function resolveDevice(deviceId?: string): Promise<string> {
 
 export async function screenshot(deviceId?: string): Promise<Buffer> {
   const id = await resolveDevice(deviceId);
-  return runBuffer("adb", ["-s", id, "exec-out", "screencap", "-p"], {
-    timeout: 30_000,
+  return Promise.resolve(
+    runBuffer("adb", ["-s", id, "exec-out", "screencap", "-p"], {
+      timeout: 30_000,
+    }),
+  ).catch(async (error: unknown) => {
+    if (!isDeviceGoneError(error)) throw error;
+    if (cachedFirstDevice?.id === id) resetCaches();
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}\n${await describeAvailableDevices(id)}`,
+    );
   });
 }
 

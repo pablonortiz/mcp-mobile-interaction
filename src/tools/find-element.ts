@@ -8,6 +8,7 @@ import { getDriver } from "../platforms/driver.js";
 import { uiTreeSafe } from "../utils/ui-tree-fallback.js";
 import type { UiElement } from "../types.js";
 import { matchElement, describeCriteria, type MatchCriteria } from "../utils/element-matcher.js";
+import { describeNearMisses } from "../utils/similar-elements.js";
 import { formatUiElements, UI_LINE_FORMAT } from "../utils/format-ui.js";
 import { scrollOnce } from "../utils/scroll.js";
 import { READ_ONLY } from "../utils/annotations.js";
@@ -87,12 +88,13 @@ export function registerFindElementTool(server: McpServer) {
       const criteria: MatchCriteria = { text_exact, text_contains, resource_id, type_contains };
       const limit = max_results ?? 10;
       let allMatches: UiElement[] = [];
+      let lastTree: UiElement[] = [];
 
       if (scroll_to_find) {
         const scrollLimit = max_scrolls ?? 5;
         for (let i = 0; i <= scrollLimit; i++) {
-          const tree = await driver.getUiTree(device_id);
-          const matches = tree.filter((el) => matchElement(el, criteria));
+          lastTree = await driver.getUiTree(device_id);
+          const matches = lastTree.filter((el) => matchElement(el, criteria));
           if (matches.length > 0) {
             allMatches = matches;
             break;
@@ -103,8 +105,8 @@ export function registerFindElementTool(server: McpServer) {
           }
         }
       } else {
-        const tree = await driver.getUiTree(device_id);
-        allMatches = tree.filter((el) => matchElement(el, criteria));
+        lastTree = await driver.getUiTree(device_id);
+        allMatches = lastTree.filter((el) => matchElement(el, criteria));
       }
 
       const results = allMatches.slice(0, limit);
@@ -114,7 +116,7 @@ export function registerFindElementTool(server: McpServer) {
         return {
           content: [{
             type: "text" as const,
-            text: `No elements found matching ${criteriaDesc}.`,
+            text: `No elements found matching ${criteriaDesc}.${describeNearMisses(lastTree, criteria)}`,
           }],
         };
       }

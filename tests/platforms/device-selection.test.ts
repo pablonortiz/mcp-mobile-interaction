@@ -59,6 +59,31 @@ describe("getFirstDeviceId", () => {
     );
   });
 
+  it("does not mistake a missing shell command for a disconnect", async () => {
+    mockRun.mockResolvedValue(devicesOutput("emulator-5554"));
+    await android.getFirstDeviceId();
+
+    mockRun.mockRejectedValueOnce(new Error("/system/bin/sh: cmd: not found"));
+    await expect(android.getLogs("emulator-5554", {})).rejects.toThrow(
+      /cmd: not found/,
+    );
+
+    // The cache survived, so the device is still the resolved one.
+    mockRun.mockResolvedValue(devicesOutput("emulator-9999"));
+    expect(await android.getFirstDeviceId()).toBe("emulator-5554");
+  });
+
+  it("names what is attached when the device id is wrong", async () => {
+    mockRun.mockImplementation(async (_file, args) => {
+      const joined = (args as string[]).join(" ");
+      if (joined.includes("devices")) return devicesOutput("emulator-5554");
+      throw new Error("error: device 'emulator-9999' not found");
+    });
+    await expect(android.getLogs("emulator-9999", {})).rejects.toThrow(
+      /Connected: emulator-5554 \(emulator\)/,
+    );
+  });
+
   it("drops the cached device once it stops answering", async () => {
     mockRun.mockResolvedValue(devicesOutput("emulator-5554"));
     await android.getFirstDeviceId();
