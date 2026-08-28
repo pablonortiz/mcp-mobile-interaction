@@ -13,6 +13,7 @@ import { loadFlow } from "../flow/load.js";
 import { executeFlow } from "../flow/runner.js";
 import { formatFlowReport, formatFlowPlan } from "../flow/report.js";
 import { stepsMissingAppId } from "../flow/parse.js";
+import { clearDevOverlays } from "../utils/dev-overlays.js";
 import { ACTION } from "../utils/annotations.js";
 import type { FlowContext, ParsedFlow } from "../flow/types.js";
 
@@ -56,6 +57,10 @@ export function registerRunFlowTool(server: McpServer) {
         .int()
         .optional()
         .describe("Auto-wait budget per element lookup. Default: 10000"),
+      dismiss_dev_overlays: z
+        .boolean()
+        .optional()
+        .describe("Clear React Native LogBox overlays before running. They intercept taps aimed at the app underneath, and a release build has none, so this is a no-op there. Kept out of the YAML so flows stay portable to Maestro. Default: true"),
       dry_run: z
         .boolean()
         .optional()
@@ -76,6 +81,7 @@ export function registerRunFlowTool(server: McpServer) {
       env,
       default_timeout_ms,
       dry_run,
+      dismiss_dev_overlays,
       observe,
     }) => {
       const platform = await resolvePlatform(platformArg);
@@ -126,9 +132,18 @@ export function registerRunFlowTool(server: McpServer) {
         appId: effectiveAppId,
       };
 
+      const cleared =
+        dismiss_dev_overlays === false
+          ? []
+          : await clearDevOverlays(driver, ctx.deviceId).catch(() => []);
+
       const started = Date.now();
       const run = await executeFlow(parsed.steps, ctx);
-      const report = formatFlowReport(run, Date.now() - started);
+      const preamble =
+        cleared.length > 0
+          ? `Cleared ${cleared.length} dev overlay(s) first: ${cleared.join(", ")}.\n`
+          : "";
+      const report = preamble + formatFlowReport(run, Date.now() - started);
 
       if (run.failed) {
         const context = await captureFailureContext(ctx);

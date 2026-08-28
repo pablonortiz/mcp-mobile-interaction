@@ -23,6 +23,8 @@ async function runSteps(
       if (await runGroup(step, ctx, results, prefix)) return true;
     } else if (step.kind === "repeat") {
       if (await runRepeat(step, ctx, results, prefix)) return true;
+    } else if (step.kind === "retry") {
+      if (await runRetry(step, ctx, results, prefix)) return true;
     } else if (await runSingle(step, ctx, results, prefix)) {
       return true;
     }
@@ -64,6 +66,42 @@ async function runRepeat(
     if (await runSteps(step.steps, ctx, results, iterationPrefix)) return true;
   }
   return false;
+}
+
+/**
+ * Runs a block again when it fails, up to maxRetries extra attempts. Failed
+ * attempts stay in the report under their own prefix: a flow that only passed
+ * on the third try should not read as a clean run.
+ */
+async function runRetry(
+  step: Extract<FlowStep, { kind: "retry" }>,
+  ctx: FlowContext,
+  results: StepResult[],
+  prefix: string,
+): Promise<boolean> {
+  const attempts = step.maxRetries + 1;
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const attemptResults: StepResult[] = [];
+    const attemptPrefix =
+      attempts === 1
+        ? `${prefix}${step.label} · `
+        : `${prefix}${step.label} #${attempt} · `;
+
+    const failed = await runSteps(step.steps, ctx, attemptResults, attemptPrefix);
+    results.push(...attemptResults);
+    if (!failed) return false;
+
+    if (attempt < attempts) {
+      results.push({
+        label: `${prefix}${step.label} #${attempt}`,
+        status: "skipped",
+        durationMs: 0,
+        detail: `attempt ${attempt} failed — retrying`,
+      });
+    }
+  }
+  return true;
 }
 
 async function runGroup(

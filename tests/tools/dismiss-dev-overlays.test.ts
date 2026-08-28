@@ -8,6 +8,7 @@ const mockTap = jest.fn<(x: number, y: number, id?: string) => Promise<void>>();
 jest.unstable_mockModule("../../src/platforms/driver.js", () => ({
   getDriver: () => ({ getUiTree: mockGetUiTree, tap: mockTap }),
 }));
+
 jest.unstable_mockModule("../../src/utils/resolve-platform.js", () => ({
   resolvePlatform: async () => "android",
   PLATFORM_DESCRIPTION: "",

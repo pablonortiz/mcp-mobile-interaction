@@ -134,6 +134,7 @@ const NORMALIZERS: Record<string, Normalizer> = {
   hideKeyboard: () => ({ kind: "hideKeyboard", label: "hideKeyboard" }),
   runFlow: normalizeRunFlow,
   repeat: normalizeRepeat,
+  retry: normalizeRetry,
 };
 
 const SUPPORTED = Object.keys(NORMALIZERS).join(", ");
@@ -298,6 +299,34 @@ function normalizeRunFlow(args: unknown, where: string): FlowStep {
   return { kind: "group", when, steps, label };
 }
 
+/**
+ * Maestro's retry block: re-runs its commands when they fail. Kept as a block
+ * rather than a per-step flag so the flow author decides what is safe to redo
+ * — re-running `inputText` alone would append to a field that took the text
+ * partially, while `eraseText` + `inputText` inside the block is idempotent.
+ */
+function normalizeRetry(args: unknown, where: string): FlowStep {
+  const map = asMap(args, where);
+  if (map.commands === undefined) throw new Error(`${where}: requires commands`);
+
+  const requested =
+    map.maxRetries !== undefined
+      ? requireNumber(map.maxRetries, `${where}.maxRetries`)
+      : DEFAULT_MAX_RETRIES;
+  if (requested < 0 || requested > MAX_RETRIES_LIMIT) {
+    throw new Error(
+      `${where}.maxRetries: must be between 0 and ${MAX_RETRIES_LIMIT} (got ${requested})`,
+    );
+  }
+
+  return {
+    kind: "retry",
+    maxRetries: requested,
+    steps: normalizeSteps(map.commands, `${where}.commands`),
+    label: `retry (up to ${requested + 1} attempt${requested === 0 ? "" : "s"})`,
+  };
+}
+
 function normalizeRepeat(args: unknown, where: string): FlowStep {
   const map = asMap(args, where);
   const times = map.times !== undefined ? requireNumber(map.times, `${where}.times`) : undefined;
@@ -387,6 +416,9 @@ function optionalNumber(raw: unknown, where: string): number | undefined {
   return requireNumber(raw, where);
 }
 
+const MAX_RETRIES_LIMIT = 3;
+const DEFAULT_MAX_RETRIES = 1;
+
 const APP_ID_STEPS = new Set(["launchApp", "stopApp", "clearState"]);
 
 /**
@@ -395,7 +427,11 @@ const APP_ID_STEPS = new Set(["launchApp", "stopApp", "clearState"]);
  */
 export function stepsMissingAppId(steps: FlowStep[]): string[] {
   return steps.flatMap((step) => {
-    if (step.kind === "group" || step.kind === "repeat") {
+    if (
+      step.kind === "group" ||
+      step.kind === "repeat" ||
+      step.kind === "retry"
+    ) {
       return stepsMissingAppId(step.steps);
     }
     const needsAppId = APP_ID_STEPS.has(step.kind);

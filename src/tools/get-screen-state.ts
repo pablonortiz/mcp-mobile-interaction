@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { dedupeResponse } from "../utils/response-cache.js";
+import { dedupeResponse, pickAnchors } from "../utils/response-cache.js";
 import {
   resolvePlatform,
   PLATFORM_DESCRIPTION,
@@ -69,6 +69,7 @@ export function registerGetScreenStateTool(server: McpServer) {
           {
             force: force_full,
             summary: `The UI tree (${filtered.length} elements)`,
+            anchors: pickAnchors(filtered),
           },
         );
         content.push({ type: "text" as const, text });

@@ -55,3 +55,56 @@ describe("dedupeResponse", () => {
     expect(dedupeResponse("tree:dev0", "payload").unchanged).toBe(false);
   });
 });
+
+describe("pickAnchors", () => {
+  it("prefers actionable labels", async () => {
+    const { pickAnchors } = await import("../../src/utils/response-cache.js");
+    const elements = [
+      { text: "Cant.", clickable: false },
+      { text: "Confirmar", clickable: true },
+      { text: "Confirmar Y Controlar Nuevo", clickable: true },
+    ] as never;
+    expect(pickAnchors(elements)).toEqual([
+      "Confirmar",
+      "Confirmar Y Controlar Nuevo",
+      "Cant.",
+    ]);
+  });
+
+  it("falls back to plain labels when nothing is actionable", async () => {
+    const { pickAnchors } = await import("../../src/utils/response-cache.js");
+    const elements = [{ text: "Ingresar cantidad", clickable: false }] as never;
+    expect(pickAnchors(elements)).toEqual(["Ingresar cantidad"]);
+  });
+
+  it("skips empty labels and duplicates", async () => {
+    const { pickAnchors } = await import("../../src/utils/response-cache.js");
+    const elements = [
+      { text: "  ", clickable: true },
+      { text: "Confirmar", clickable: true },
+      { text: "Confirmar", clickable: false },
+    ] as never;
+    expect(pickAnchors(elements)).toEqual(["Confirmar"]);
+  });
+});
+
+describe("unchanged notice with anchors", () => {
+  it("names what is still on screen", async () => {
+    const { dedupeResponse, resetResponseCache } = await import(
+      "../../src/utils/response-cache.js"
+    );
+    resetResponseCache();
+    dedupeResponse("k", "tree", { anchors: ["Confirmar"] });
+    const again = dedupeResponse("k", "tree", { anchors: ["Confirmar", "Go back"] });
+    expect(again.text).toContain('Still showing: "Confirmar", "Go back"');
+  });
+
+  it("stays terse when there are no anchors", async () => {
+    const { dedupeResponse, resetResponseCache } = await import(
+      "../../src/utils/response-cache.js"
+    );
+    resetResponseCache();
+    dedupeResponse("k2", "tree");
+    expect(dedupeResponse("k2", "tree").text).not.toContain("Still showing");
+  });
+});

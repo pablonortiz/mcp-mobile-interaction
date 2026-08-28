@@ -85,7 +85,7 @@ registerRunFlowTool(server);
 registerDismissDevOverlaysTool(server);
 
 async function main() {
-  startParentWatchdog(() => cleanupOrphanRecordings());
+  await startParentWatchdog(() => cleanupOrphanRecordings());
   await cleanupOrphanRecordings();
 
   const transport = new StdioServerTransport();

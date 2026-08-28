@@ -142,7 +142,7 @@ appId: com.example.app
     timeout: 15000
 ```
 
-**Supported commands**: `launchApp`, `tapOn`, `doubleTapOn`, `longPressOn`, `inputText`, `eraseText`, `assertVisible`, `assertNotVisible`, `extendedWaitUntil`, `scrollUntilVisible`, `swipe`, `back`, `pressKey`, `hideKeyboard`, `waitForAnimationToEnd`, `stopApp`, `clearState`, `openLink`, `runFlow` (inline `commands` or `file:`, with `when: visible/notVisible/platform`), `repeat` (`times` and/or `while:`).
+**Supported commands**: `launchApp`, `tapOn`, `doubleTapOn`, `longPressOn`, `inputText`, `eraseText`, `assertVisible`, `assertNotVisible`, `extendedWaitUntil`, `scrollUntilVisible`, `swipe`, `back`, `pressKey`, `hideKeyboard`, `waitForAnimationToEnd`, `stopApp`, `clearState`, `openLink`, `runFlow` (inline `commands` or `file:`, with `when: visible/notVisible/platform`), `repeat` (`times` and/or `while:`), `retry` (`maxRetries` 0-3, default 1, with `commands`).
 
 **Composition & parameters** (v1.6):
 
@@ -183,7 +183,9 @@ Behaviour worth knowing, most of it the result of failures measured in real sess
 - **Icon-font glyphs are not text.** Private Use Area codepoints render as blank everywhere but the device; they no longer pass the "has text" filter as empty strings.
 - **`observe: "on_change"`** returns the first screen that differs from the one before the action, which catches a toast a fixed delay would miss.
 - **Flows reuse an unchanged tree.** A dump costs ~2s; `assertVisible: X` followed by `tapOn: X` now pays for it once. Anything that touches the device invalidates it.
-- **The server exits with its client.** A parent-pid watchdog prevents the orphan instances that otherwise accumulate across sessions.
+- **The server exits with its client.** The watchdog follows the ancestor chain, not just the direct parent: an npm-installed server runs as `client → npm exec → node`, so watching ppid alone would watch the npm wrapper and outlive the session.
+- **`run_flow` clears dev overlays first** (`dismiss_dev_overlays`, default true). It stays a tool parameter rather than a YAML command so flows remain portable to Maestro, which has no such command.
+- **`retry` follows Maestro's shape** — a block with `maxRetries` (0-3), not a per-step flag. Wrapping the commands means the flow author decides what is safe to redo: re-running `inputText` alone appends to a field that took the text partially, while `eraseText` + `inputText` inside the block is idempotent. Wrapping large parts of a flow in `retry` masks real app problems.
 
 ## UI Tree Format
 

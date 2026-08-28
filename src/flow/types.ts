@@ -44,6 +44,7 @@ export type FlowStep = StepBase &
     | { kind: "hideKeyboard" }
     | { kind: "group"; when?: FlowCondition; steps: FlowStep[] }
     | { kind: "repeat"; times?: number; while?: FlowCondition; steps: FlowStep[] }
+    | { kind: "retry"; maxRetries: number; steps: FlowStep[] }
     | { kind: "flowRef"; path: string; when?: FlowCondition; env?: Record<string, string> }
   );
 

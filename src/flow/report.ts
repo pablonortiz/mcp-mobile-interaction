@@ -27,7 +27,11 @@ export function formatFlowReport(run: FlowRunResult, totalMs: number): string {
 export function formatFlowPlan(steps: FlowStep[], indent = ""): string[] {
   return steps.flatMap((step) => {
     const line = `${indent}${step.label}`;
-    if (step.kind === "group" || step.kind === "repeat") {
+    if (
+      step.kind === "group" ||
+      step.kind === "repeat" ||
+      step.kind === "retry"
+    ) {
       return [line, ...formatFlowPlan(step.steps, `${indent}  `)];
     }
     return [line];

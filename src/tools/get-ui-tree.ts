@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { dedupeResponse } from "../utils/response-cache.js";
+import { dedupeResponse, pickAnchors } from "../utils/response-cache.js";
 import {
   resolvePlatform,
   PLATFORM_DESCRIPTION,
@@ -91,7 +91,11 @@ export function registerGetUiTreeTool(server: McpServer) {
       const { text } = dedupeResponse(
         `ui_tree:${platform}:${device_id ?? "default"}:${label}:${max_elements ?? "all"}`,
         formatUiTree(elements, label, max_elements),
-        { force: force_full, summary: `The UI tree (${elements.length} elements)` },
+        {
+          force: force_full,
+          summary: `The UI tree (${elements.length} elements)`,
+          anchors: pickAnchors(elements),
+        },
       );
 
       return { content: [{ type: "text" as const, text }] };
