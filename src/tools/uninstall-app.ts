@@ -5,6 +5,7 @@ import {
   PLATFORM_DESCRIPTION,
 } from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
+import { resolveDeviceId } from "../utils/resolve-device.js";
 import { DESTRUCTIVE } from "../utils/annotations.js";
 
 export function registerUninstallAppTool(server: McpServer) {
@@ -25,7 +26,7 @@ export function registerUninstallAppTool(server: McpServer) {
     async ({ platform: platformArg, device_id, package: packageName }) => {
       const platform = await resolvePlatform(platformArg);
       const driver = getDriver(platform);
-      const deviceId = device_id ?? (await driver.getFirstDeviceId());
+      const deviceId = await resolveDeviceId(platform, device_id);
 
       await driver.uninstallApp(deviceId, packageName);
 

@@ -9,6 +9,7 @@ import {
   PACKAGE_DESCRIPTION,
 } from "../utils/resolve-package.js";
 import { getDriver } from "../platforms/driver.js";
+import { resolveDeviceId } from "../utils/resolve-device.js";
 import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
 import { DESTRUCTIVE } from "../utils/annotations.js";
@@ -46,7 +47,7 @@ export function registerKillAppTool(server: McpServer) {
         device_id,
       );
       const driver = getDriver(platform);
-      const deviceId = device_id ?? (await driver.getFirstDeviceId());
+      const deviceId = await resolveDeviceId(platform, device_id);
 
       await driver.killApp(deviceId, packageName);
 

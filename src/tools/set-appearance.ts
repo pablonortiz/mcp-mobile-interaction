@@ -5,6 +5,7 @@ import {
   PLATFORM_DESCRIPTION,
 } from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
+import { resolveDeviceId } from "../utils/resolve-device.js";
 import { ACTION } from "../utils/annotations.js";
 
 export function registerSetAppearanceTool(server: McpServer) {
@@ -25,7 +26,7 @@ export function registerSetAppearanceTool(server: McpServer) {
     async ({ platform: platformArg, device_id, mode }) => {
       const platform = await resolvePlatform(platformArg);
       const driver = getDriver(platform);
-      const deviceId = device_id ?? (await driver.getFirstDeviceId());
+      const deviceId = await resolveDeviceId(platform, device_id);
 
       await driver.setAppearance(deviceId, mode);
 

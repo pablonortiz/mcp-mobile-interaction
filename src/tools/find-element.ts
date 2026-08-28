@@ -5,6 +5,7 @@ import {
   PLATFORM_DESCRIPTION,
 } from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
+import { resolveDeviceId } from "../utils/resolve-device.js";
 import { uiTreeSafe } from "../utils/ui-tree-fallback.js";
 import type { UiElement } from "../types.js";
 import { matchElement, describeCriteria, type MatchCriteria } from "../utils/element-matcher.js";
@@ -115,7 +116,7 @@ export function registerFindElementTool(server: McpServer) {
 
       if (results.length === 0) {
         const foreground = await driver
-          .getForegroundApp(device_id ?? (await driver.getFirstDeviceId()))
+          .getForegroundApp(await resolveDeviceId(platform, device_id))
           .catch(() => undefined);
         const context = describeForegroundContext(
           foreground?.package,

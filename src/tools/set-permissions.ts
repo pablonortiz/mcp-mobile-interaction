@@ -9,6 +9,7 @@ import {
   PACKAGE_DESCRIPTION,
 } from "../utils/resolve-package.js";
 import { getDriver } from "../platforms/driver.js";
+import { resolveDeviceId } from "../utils/resolve-device.js";
 import * as android from "../platforms/android.js";
 import { ACTION } from "../utils/annotations.js";
 
@@ -46,7 +47,7 @@ export function registerSetPermissionsTool(server: McpServer) {
       }
 
       const driver = getDriver(platform);
-      const deviceId = device_id ?? (await driver.getFirstDeviceId());
+      const deviceId = await resolveDeviceId(platform, device_id);
       const packageName = await resolvePackage(packageArg, platform, device_id);
       const shouldGrant = grant ?? true;
 

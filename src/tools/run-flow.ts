@@ -5,6 +5,7 @@ import {
   PLATFORM_DESCRIPTION,
 } from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
+import { resolveDeviceId } from "../utils/resolve-device.js";
 import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
 import { filterUiElements } from "../utils/ui-filter.js";
@@ -127,7 +128,7 @@ export function registerRunFlowTool(server: McpServer) {
       const ctx: FlowContext = {
         driver,
         platform,
-        deviceId: device_id ?? (await driver.getFirstDeviceId()),
+        deviceId: await resolveDeviceId(platform, device_id),
         defaultTimeoutMs: default_timeout_ms ?? 10_000,
         appId: effectiveAppId,
       };

@@ -9,6 +9,7 @@ import {
   PACKAGE_DESCRIPTION,
 } from "../utils/resolve-package.js";
 import { getDriver } from "../platforms/driver.js";
+import { resolveDeviceId } from "../utils/resolve-device.js";
 import { READ_ONLY } from "../utils/annotations.js";
 
 export function registerGetAppInfoTool(server: McpServer) {
@@ -35,7 +36,7 @@ export function registerGetAppInfoTool(server: McpServer) {
         device_id,
       );
       const driver = getDriver(platform);
-      const deviceId = device_id ?? (await driver.getFirstDeviceId());
+      const deviceId = await resolveDeviceId(platform, device_id);
 
       const info = await driver.getAppInfo(deviceId, packageName);
 

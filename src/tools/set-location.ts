@@ -5,6 +5,7 @@ import {
   PLATFORM_DESCRIPTION,
 } from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
+import { resolveDeviceId } from "../utils/resolve-device.js";
 import { ACTION } from "../utils/annotations.js";
 
 export function registerSetLocationTool(server: McpServer) {
@@ -32,7 +33,7 @@ export function registerSetLocationTool(server: McpServer) {
     async ({ platform: platformArg, device_id, latitude, longitude }) => {
       const platform = await resolvePlatform(platformArg);
       const driver = getDriver(platform);
-      const deviceId = device_id ?? (await driver.getFirstDeviceId());
+      const deviceId = await resolveDeviceId(platform, device_id);
 
       await driver.setLocation(deviceId, latitude, longitude);
 

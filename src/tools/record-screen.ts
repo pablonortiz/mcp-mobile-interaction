@@ -5,6 +5,7 @@ import {
   PLATFORM_DESCRIPTION,
 } from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
+import { resolveDeviceId } from "../utils/resolve-device.js";
 import * as android from "../platforms/android.js";
 import { ACTION } from "../utils/annotations.js";
 
@@ -32,7 +33,7 @@ export function registerRecordScreenTool(server: McpServer) {
       const driver = getDriver(platform);
 
       if (action === "status") {
-        const deviceId = device_id ?? (await driver.getFirstDeviceId());
+        const deviceId = await resolveDeviceId(platform, device_id);
         const recording =
           platform === "android"
             ? await android.isRecordingOnDevice(deviceId)

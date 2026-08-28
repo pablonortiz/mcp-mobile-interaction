@@ -8,6 +8,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import * as android from "../platforms/android.js";
 import { getDriver } from "../platforms/driver.js";
+import { resolveDeviceId } from "../utils/resolve-device.js";
 
 export function registerGetDeviceLogsTool(server: McpServer) {
   server.tool(
@@ -50,7 +51,7 @@ export function registerGetDeviceLogsTool(server: McpServer) {
     async ({ platform: platformArg, device_id, tag, search, level, lines, clear, dump_to_file }) => {
       const platform = await resolvePlatform(platformArg);
       const driver = getDriver(platform);
-      const deviceId = device_id ?? (await driver.getFirstDeviceId());
+      const deviceId = await resolveDeviceId(platform, device_id);
 
       let clearWarning: string | undefined;
 
