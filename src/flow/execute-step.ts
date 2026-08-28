@@ -240,7 +240,7 @@ async function scrollUntilVisible(
     if (findMatch(tree, step.selector) !== undefined) {
       return ok(scrolls > 0 ? `after ${scrolls} scroll(s)` : undefined);
     }
-    await scrollOnce(ctx.platform, step.direction, ctx.deviceId);
+    await scrollOnce(ctx.platform, step.direction, ctx.deviceId, tree);
     invalidateTree(ctx);
     scrolls++;
     await delay(500);

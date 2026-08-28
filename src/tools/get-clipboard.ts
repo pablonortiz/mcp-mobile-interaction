@@ -16,7 +16,7 @@ export function registerGetClipboardTool(server: McpServer) {
       device_id: z
         .string()
         .optional()
-        .describe("Device ID. Omit to use the first connected device."),
+        .describe("Device ID. Omit for the connected device."),
     },
     READ_ONLY,
     async ({ platform: platformArg, device_id }) => {

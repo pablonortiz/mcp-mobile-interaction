@@ -23,7 +23,7 @@ export function registerScreenshotTool(server: McpServer) {
       device_id: z
         .string()
         .optional()
-        .describe("Device ID. Omit to use the first connected device."),
+        .describe("Device ID. Omit for the connected device."),
       quality: z
         .number()
         .min(1)

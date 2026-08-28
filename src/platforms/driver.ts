@@ -36,6 +36,14 @@ export interface PlatformDriver {
     durationMs?: number,
     deviceId?: string,
   ): Promise<void>;
+  dragAndDrop(
+    startX: number,
+    startY: number,
+    endX: number,
+    endY: number,
+    durationMs?: number,
+    deviceId?: string,
+  ): Promise<void>;
   typeText(text: string, deviceId?: string): Promise<TypeTextMethod>;
   pressKey(
     key?: string,

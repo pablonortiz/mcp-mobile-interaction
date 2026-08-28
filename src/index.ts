@@ -39,8 +39,10 @@ import { registerClearTextTool } from "./tools/clear-text.js";
 import { registerDoctorTool } from "./tools/doctor.js";
 import { registerRunFlowTool } from "./tools/run-flow.js";
 import { registerDismissDevOverlaysTool } from "./tools/dismiss-dev-overlays.js";
+import { registerSetPermissionsTool } from "./tools/set-permissions.js";
 import { startParentWatchdog } from "./utils/watchdog.js";
 import { cleanupOrphanRecordings } from "./platforms/android.js";
+import { cleanupOldTempFiles } from "./utils/temp-cleanup.js";
 
 const server = new McpServer({
   name: "mcp-mobile-interaction",
@@ -83,10 +85,12 @@ registerClearTextTool(server);
 registerDoctorTool(server);
 registerRunFlowTool(server);
 registerDismissDevOverlaysTool(server);
+registerSetPermissionsTool(server);
 
 async function main() {
   await startParentWatchdog(() => cleanupOrphanRecordings());
   await cleanupOrphanRecordings();
+  void cleanupOldTempFiles();
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

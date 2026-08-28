@@ -9,6 +9,7 @@ import { uiTreeSafe } from "../utils/ui-tree-fallback.js";
 import type { UiElement } from "../types.js";
 import { matchElement, describeCriteria, type MatchCriteria } from "../utils/element-matcher.js";
 import { describeNearMisses } from "../utils/similar-elements.js";
+import { describeForegroundContext } from "../utils/foreground-context.js";
 import { formatUiElements, UI_LINE_FORMAT } from "../utils/format-ui.js";
 import { scrollOnce } from "../utils/scroll.js";
 import { READ_ONLY } from "../utils/annotations.js";
@@ -22,7 +23,7 @@ export function registerFindElementTool(server: McpServer) {
       device_id: z
         .string()
         .optional()
-        .describe("Device ID. Omit to use the first connected device."),
+        .describe("Device ID. Omit for the connected device."),
       text_exact: z
         .string()
         .optional()
@@ -100,7 +101,7 @@ export function registerFindElementTool(server: McpServer) {
             break;
           }
           if (i < scrollLimit) {
-            await scrollOnce(platform, scroll_direction ?? "down", device_id);
+            await scrollOnce(platform, scroll_direction ?? "down", device_id, lastTree);
             await new Promise((resolve) => setTimeout(resolve, 500));
           }
         }
@@ -113,11 +114,20 @@ export function registerFindElementTool(server: McpServer) {
       const criteriaDesc = describeCriteria(criteria);
 
       if (results.length === 0) {
+        const foreground = await driver
+          .getForegroundApp(device_id ?? (await driver.getFirstDeviceId()))
+          .catch(() => undefined);
+        const context = describeForegroundContext(
+          foreground?.package,
+          undefined,
+          lastTree,
+        );
         return {
           content: [{
             type: "text" as const,
-            text: `No elements found matching ${criteriaDesc}.${describeNearMisses(lastTree, criteria)}`,
+            text: `No elements found matching ${criteriaDesc}.${context.note}${context.offApp ? "" : describeNearMisses(lastTree, criteria)}`,
           }],
+          isError: context.offApp,
         };
       }
 

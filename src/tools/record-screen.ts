@@ -17,7 +17,7 @@ export function registerRecordScreenTool(server: McpServer) {
       device_id: z
         .string()
         .optional()
-        .describe("Device ID. Omit to use the first connected device."),
+        .describe("Device ID. Omit for the connected device."),
       action: z
         .enum(["start", "stop", "status"])
         .describe('"start" to begin recording, "stop" to finish and retrieve the video, "status" to check without changing anything'),

@@ -19,7 +19,7 @@ export function registerGetUiTreeTool(server: McpServer) {
       device_id: z
         .string()
         .optional()
-        .describe("Device ID. Omit to use the first connected device."),
+        .describe("Device ID. Omit for the connected device."),
       only_clickable: z
         .boolean()
         .optional()

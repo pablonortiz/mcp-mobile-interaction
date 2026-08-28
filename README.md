@@ -114,6 +114,7 @@ All tools accept a `platform` parameter (`"android"` or `"ios"`) and an optional
 
 | Tool | Description |
 |------|-------------|
+| `set_permissions` | Grant or revoke Android runtime permissions, so a flow can start from a clean install |
 | `dismiss_dev_overlays` | Close React Native LogBox overlays that intercept taps aimed at the app underneath |
 | `run_flow` | Run a declarative multi-step flow server-side in a single call — deterministic sequences (login, navigation) stop costing one LLM round-trip per tap |
 
@@ -166,6 +167,26 @@ appId: com.example.app
 
 Not supported (v1): `runFlow` with `file:`, JavaScript conditions (`when: true:`), `point` combined with an element selector, and horizontal `scrollUntilVisible`.
 
+## Platform Support
+
+Android is the primary target. iOS works on **simulators**; on physical devices several operations have no CLI equivalent and fail with an explicit message rather than silently doing nothing.
+
+| Capability | Android | iOS simulator | iOS device |
+|---|---|---|---|
+| UI tree, taps, swipes, typing | ✅ | ✅ (needs `idb`) | ✅ (needs `idb`) |
+| Screenshots, recording | ✅ | ✅ | ✅ |
+| App lifecycle (launch/kill/clear) | ✅ | ✅ | ✅ |
+| Clipboard | ✅ | ✅ | ❌ |
+| Device logs | ✅ | ✅ | ❌ (use Console.app) |
+| Appearance (dark/light) | ✅ | ✅ | ❌ |
+| Foreground app | ✅ | ✅ | ❌ |
+| Runtime permissions | ✅ | ❌ (`xcrun simctl privacy`) | ❌ |
+| Drag and drop | ✅ | ❌ | ❌ |
+| Wi-Fi / mobile data / airplane / throttling | ✅ | ❌ | ❌ |
+| Rotation | ✅ | ❌ | ❌ |
+
+All iOS UI interaction requires `idb` (`brew install idb-companion && pip install fb-idb`); `doctor` reports whether it is present.
+
 ## Reliability
 
 Behaviour worth knowing, most of it the result of failures measured in real sessions:
@@ -183,6 +204,9 @@ Behaviour worth knowing, most of it the result of failures measured in real sess
 - **Icon-font glyphs are not text.** Private Use Area codepoints render as blank everywhere but the device; they no longer pass the "has text" filter as empty strings.
 - **`observe: "on_change"`** returns the first screen that differs from the one before the action, which catches a toast a fixed delay would miss.
 - **Flows reuse an unchanged tree.** A dump costs ~2s; `assertVisible: X` followed by `tapOn: X` now pays for it once. Anything that touches the device invalidates it.
+- **Scrolling aims inside the scrollable container**, not at the centre of the screen — a list that does not occupy the middle would otherwise never move.
+- **Temp files are cleaned on startup.** Recordings are handed over as a path and were never removed; 226 MB from a single day were found sitting in the temp directory.
+- **A lookup that finds nothing says when the app is not on screen.** "No elements found" reads as a selector problem; being told the launcher is in the foreground stops the wrong investigation.
 - **The server exits with its client.** The watchdog follows the ancestor chain, not just the direct parent: an npm-installed server runs as `client → npm exec → node`, so watching ppid alone would watch the npm wrapper and outlive the session.
 - **`run_flow` clears dev overlays first** (`dismiss_dev_overlays`, default true). It stays a tool parameter rather than a YAML command so flows remain portable to Maestro, which has no such command.
 - **`retry` follows Maestro's shape** — a block with `maxRetries` (0-3), not a per-step flag. Wrapping the commands means the flow author decides what is safe to redo: re-running `inputText` alone appends to a field that took the text partially, while `eraseText` + `inputText` inside the block is idempotent. Wrapping large parts of a flow in `retry` masks real app problems.

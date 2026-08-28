@@ -17,7 +17,7 @@ export function registerDismissDevOverlaysTool(server: McpServer) {
       device_id: z
         .string()
         .optional()
-        .describe("Device ID. Omit to use the first connected device."),
+        .describe("Device ID. Omit for the connected device."),
     },
     ACTION,
     async ({ platform: platformArg, device_id }) => {

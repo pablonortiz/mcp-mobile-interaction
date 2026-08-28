@@ -19,7 +19,7 @@ export function registerRotateDeviceTool(server: McpServer) {
       device_id: z
         .string()
         .optional()
-        .describe("Device ID. Omit to use the first connected device."),
+        .describe("Device ID. Omit for the connected device."),
       orientation: z
         .enum(["portrait", "landscape", "reverse_portrait", "reverse_landscape"])
         .describe("Target orientation"),

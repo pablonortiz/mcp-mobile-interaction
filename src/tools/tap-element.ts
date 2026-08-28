@@ -6,11 +6,12 @@ import {
 } from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
 import { uiTreeSafe } from "../utils/ui-tree-fallback.js";
-import type { UiElement } from "../types.js";
+import type { Platform, UiElement } from "../types.js";
 import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
 import { matchElement, describeCriteria, type MatchCriteria } from "../utils/element-matcher.js";
 import { describeNearMisses } from "../utils/similar-elements.js";
+import { describeForegroundContext } from "../utils/foreground-context.js";
 import { findFreePoint } from "../utils/free-point.js";
 import { scrollOnce } from "../utils/scroll.js";
 import { ACTION } from "../utils/annotations.js";
@@ -36,6 +37,19 @@ function describeOverlay(overlay: UiElement): string {
   if (name) return `"${name}"`;
   const { x, y, width, height } = overlay.bounds;
   return `a ${overlay.type} at [${x},${y}][${x + width},${y + height}]`;
+}
+
+/** Names the app actually on screen when a lookup fails, if it is not ours. */
+async function foregroundNote(
+  platform: Platform,
+  deviceId: string | undefined,
+  tree: UiElement[],
+): Promise<string> {
+  const driver = getDriver(platform);
+  const foreground = await driver
+    .getForegroundApp(deviceId ?? (await driver.getFirstDeviceId()))
+    .catch(() => undefined);
+  return describeForegroundContext(foreground?.package, undefined, tree).note;
 }
 
 function contains(outer: UiElement, x: number, y: number): boolean {
@@ -93,7 +107,7 @@ export function registerTapElementTool(server: McpServer) {
       device_id: z
         .string()
         .optional()
-        .describe("Device ID. Omit to use the first connected device."),
+        .describe("Device ID. Omit for the connected device."),
       text_contains: z
         .string()
         .optional()
@@ -194,7 +208,7 @@ export function registerTapElementTool(server: McpServer) {
           target = pickTarget(matches, matchIndex);
           if (target) break;
           if (i < scrollLimit) {
-            await scrollOnce(platform, scroll_direction ?? "down", device_id);
+            await scrollOnce(platform, scroll_direction ?? "down", device_id, lastTree);
             await new Promise((resolve) => setTimeout(resolve, 500));
           }
         }
@@ -239,7 +253,7 @@ export function registerTapElementTool(server: McpServer) {
             content: [
               {
                 type: "text" as const,
-                text: `Element not found (${describeCriteria(criteria)}). ${lastTree.length} elements on screen.${describeNearMisses(lastTree, criteria)}`,
+                text: `Element not found (${describeCriteria(criteria)}). ${lastTree.length} elements on screen.${await foregroundNote(platform, device_id, lastTree)}${describeNearMisses(lastTree, criteria)}`,
               },
             ],
             isError: true,

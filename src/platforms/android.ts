@@ -229,6 +229,35 @@ export async function swipe(
 const NON_ASCII = /[^\x20-\x7E]/;
 const KEYCODE_PASTE = 279;
 
+/**
+ * Press-move-release, for reordering lists and dragging items. A plain swipe
+ * flicks; a drag holds long enough for the target to pick up the gesture.
+ */
+export async function dragAndDrop(
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+  durationMs = 1000,
+  deviceId?: string,
+): Promise<void> {
+  const id = await resolveDevice(deviceId);
+  await adb(
+    id,
+    [
+      "shell",
+      "input",
+      "draganddrop",
+      String(startX),
+      String(startY),
+      String(endX),
+      String(endY),
+      String(durationMs),
+    ],
+    { timeout: Math.max(30_000, durationMs + 10_000) },
+  );
+}
+
 export async function typeText(
   text: string,
   deviceId?: string,
@@ -486,6 +515,106 @@ export async function killApp(
   packageName: string,
 ): Promise<void> {
   await adb(deviceId, ["shell", "am", "force-stop", packageName]);
+}
+
+/** Shorthand names for the runtime permissions a QA flow actually hits. */
+const PERMISSION_ALIASES: Record<string, string[]> = {
+  camera: ["android.permission.CAMERA"],
+  location: [
+    "android.permission.ACCESS_FINE_LOCATION",
+    "android.permission.ACCESS_COARSE_LOCATION",
+  ],
+  background_location: ["android.permission.ACCESS_BACKGROUND_LOCATION"],
+  storage: [
+    "android.permission.READ_EXTERNAL_STORAGE",
+    "android.permission.WRITE_EXTERNAL_STORAGE",
+  ],
+  media: [
+    "android.permission.READ_MEDIA_IMAGES",
+    "android.permission.READ_MEDIA_VIDEO",
+  ],
+  notifications: ["android.permission.POST_NOTIFICATIONS"],
+  microphone: ["android.permission.RECORD_AUDIO"],
+  contacts: ["android.permission.READ_CONTACTS"],
+  phone: ["android.permission.READ_PHONE_STATE"],
+  bluetooth: [
+    "android.permission.BLUETOOTH_CONNECT",
+    "android.permission.BLUETOOTH_SCAN",
+  ],
+};
+
+export interface PermissionResult {
+  permission: string;
+  granted: boolean;
+  detail?: string;
+}
+
+/** Expands an alias, or passes through a fully qualified permission name. */
+export function expandPermission(name: string): string[] {
+  return PERMISSION_ALIASES[name.toLowerCase()] ?? [name];
+}
+
+export function knownPermissionAliases(): string[] {
+  return Object.keys(PERMISSION_ALIASES);
+}
+
+/**
+ * Grants or revokes runtime permissions so a flow can start from a clean
+ * install without a human tapping the system dialog. Permissions the app does
+ * not declare are reported rather than silently skipped — that mismatch is
+ * usually a typo or the wrong flavour.
+ */
+export async function setPermissions(
+  deviceId: string,
+  packageName: string,
+  permissions: string[],
+  grant: boolean,
+): Promise<PermissionResult[]> {
+  const declared = await declaredPermissions(deviceId, packageName);
+  const action = grant ? "grant" : "revoke";
+  const results: PermissionResult[] = [];
+
+  for (const permission of permissions.flatMap(expandPermission)) {
+    if (declared.size > 0 && !declared.has(permission)) {
+      results.push({
+        permission,
+        granted: false,
+        detail: "not declared by the app — nothing to change",
+      });
+      continue;
+    }
+    try {
+      await adb(deviceId, ["shell", "pm", action, packageName, permission]);
+      results.push({ permission, granted: grant });
+    } catch (error) {
+      results.push({
+        permission,
+        granted: false,
+        detail:
+          error instanceof Error ? error.message.split("\n").pop() : String(error),
+      });
+    }
+  }
+
+  return results;
+}
+
+async function declaredPermissions(
+  deviceId: string,
+  packageName: string,
+): Promise<Set<string>> {
+  try {
+    const output = await adb(deviceId, [
+      "shell",
+      "dumpsys",
+      "package",
+      packageName,
+    ]);
+    const matches = output.match(/android\.permission\.[A-Z_]+/g) ?? [];
+    return new Set(matches);
+  } catch {
+    return new Set();
+  }
 }
 
 export async function installApp(
@@ -858,6 +987,7 @@ function parseUiXml(xml: string): UiElement[] {
     const text = extractAttr(attrs, "text") ?? "";
     const contentDesc = extractAttr(attrs, "content-desc") ?? "";
     const clickable = extractAttr(attrs, "clickable") === "true";
+    const scrollable = extractAttr(attrs, "scrollable") === "true";
     const boundsStr = extractAttr(attrs, "bounds") ?? "";
     const rawResourceId = extractAttr(attrs, "resource-id") ?? "";
     const enabled = extractAttr(attrs, "enabled") === "true";
@@ -892,6 +1022,7 @@ function parseUiXml(xml: string): UiElement[] {
       center_x: Math.round((x1 + x2) / 2),
       center_y: Math.round((y1 + y2) / 2),
       clickable,
+      ...(scrollable ? { scrollable } : {}),
       resource_id: resourceId ? unescapeXml(resourceId) : undefined,
       enabled,
       focused,

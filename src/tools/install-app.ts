@@ -16,7 +16,7 @@ export function registerInstallAppTool(server: McpServer) {
       device_id: z
         .string()
         .optional()
-        .describe("Device ID. Omit to use the first connected device."),
+        .describe("Device ID. Omit for the connected device."),
       path: z
         .string()
         .describe("Local path to the .apk (Android), .app bundle or .ipa (iOS)"),

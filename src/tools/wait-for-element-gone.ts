@@ -20,7 +20,7 @@ export function registerWaitForElementGoneTool(server: McpServer) {
       device_id: z
         .string()
         .optional()
-        .describe("Device ID. Omit to use the first connected device."),
+        .describe("Device ID. Omit for the connected device."),
       text_contains: z
         .string()
         .optional()
@@ -41,7 +41,7 @@ export function registerWaitForElementGoneTool(server: McpServer) {
         .number()
         .int()
         .optional()
-        .describe("Maximum time to wait in ms. Default: 10000"),
+        .describe("Maximum time to wait in ms. Default: 30000 — spinners backed by a slow request routinely outlast 10s"),
       poll_interval_ms: z
         .number()
         .int()
@@ -85,7 +85,7 @@ export function registerWaitForElementGoneTool(server: McpServer) {
       }
 
       const driver = getDriver(platform);
-      const timeout = timeout_ms ?? 10_000;
+      const timeout = timeout_ms ?? 30_000;
       const pollInterval = poll_interval_ms ?? 500;
       const start = Date.now();
 

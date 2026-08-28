@@ -725,3 +725,9 @@ export async function clearTextField(
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+export async function dragAndDrop(): Promise<void> {
+  throw new Error(
+    "Drag and drop is not available on iOS through simctl or idb. Use swipe with a long duration, or drive the gesture from the app under test.",
+  );
+}

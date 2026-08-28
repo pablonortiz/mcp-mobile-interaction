@@ -13,13 +13,13 @@ import { ACTION } from "../utils/annotations.js";
 export function registerSetNetworkStateTool(server: McpServer) {
   server.tool(
     "set_network_state",
-    "Control device network connectivity: Wi-Fi, mobile data, airplane mode, and emulator network throttling (latency/speed). Android only.",
+    "Control device network connectivity: Wi-Fi, mobile data, airplane mode, and emulator throttling. Android only.",
     {
       platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
-        .describe("Device ID. Omit to use the first connected device."),
+        .describe("Device ID. Omit for the connected device."),
       wifi: z
         .boolean()
         .optional()

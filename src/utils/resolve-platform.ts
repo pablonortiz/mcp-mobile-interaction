@@ -64,5 +64,10 @@ async function bootedIos(): Promise<string[]> {
   }
 }
 
-export const PLATFORM_DESCRIPTION =
-  "Target platform. Optional — inferred from the connected device, and only required when both an Android device and a booted iOS simulator are present.";
+/**
+ * Kept terse on purpose: this string is repeated in every tool's schema, so
+ * each word costs tokens 36 times over in the listing every session. The full
+ * explanation lives in the error raised when the platform is ambiguous, which
+ * is the only moment it matters.
+ */
+export const PLATFORM_DESCRIPTION = "Target platform. Inferred if omitted.";

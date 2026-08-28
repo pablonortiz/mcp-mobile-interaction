@@ -19,12 +19,12 @@ export function registerTypeTextTool(server: McpServer) {
       device_id: z
         .string()
         .optional()
-        .describe("Device ID. Omit to use the first connected device."),
+        .describe("Device ID. Omit for the connected device."),
       text: z.string().describe("Text to type"),
       observe: z
         .enum(["none", "ui_tree", "screenshot", "both", "on_change"])
         .optional()
-        .describe('Capture screen state after the action. "on_change" returns the first tree that differs from the one before the action — use it to catch a toast or a transient error that a fixed delay would miss. Default: none'),
+        .describe('Capture screen state after the action. "on_change" returns the first tree that differs — catches a toast a fixed delay would miss. Default: none'),
       observe_delay_ms: z
         .number()
         .int()
@@ -33,7 +33,7 @@ export function registerTypeTextTool(server: McpServer) {
       observe_stabilize: z
         .boolean()
         .optional()
-        .describe("If true, wait for UI to stabilize instead of fixed delay. Default: false"),
+        .describe("Wait for the UI to settle instead of a fixed delay. Default: false"),
       verify: z
         .boolean()
         .optional()

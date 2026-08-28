@@ -21,12 +21,12 @@ export function registerWaitForStableTool(server: McpServer) {
       device_id: z
         .string()
         .optional()
-        .describe("Device ID. Omit to use the first connected device."),
+        .describe("Device ID. Omit for the connected device."),
       timeout_ms: z
         .number()
         .int()
         .optional()
-        .describe("Maximum time to wait in ms. Default: 10000"),
+        .describe("Maximum time to wait in ms. Default: 10000 — this waits out animation, not network"),
       poll_interval_ms: z
         .number()
         .int()
