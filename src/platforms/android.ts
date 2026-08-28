@@ -15,6 +15,8 @@ import { annotateOverlays } from "../utils/overlay-detect.js";
 import { writeFile, stat } from "fs/promises";
 import { resolve as resolvePath } from "path";
 import { unescapeXml, isIconGlyph } from "../utils/xml.js";
+import { ensureDaemon, request, stopDaemon, isDaemonEnabled } from "./ui-daemon.js";
+import { parseDaemonTree } from "./daemon-tree.js";
 
 const DEVICE_CACHE_TTL_MS = 10_000;
 let cachedFirstDevice: { id: string; timestamp: number } | undefined;
@@ -859,6 +861,19 @@ export async function getUiTree(
   options?: { timeoutMs?: number },
 ): Promise<UiElement[]> {
   const id = await resolveDevice(deviceId);
+
+  // The on-device daemon answers in single-digit milliseconds; `uiautomator
+  // dump` costs ~1.9s because it restarts the instrumentation runtime and
+  // waits a hardcoded second for idle on every call.
+  if (isDaemonEnabled()) {
+    try {
+      return await getUiTreeViaDaemon(id);
+    } catch {
+      // The daemon holds UiAutomation exclusively, so it must be stopped
+      // before the command-line path can work at all.
+      await stopDaemon(id).catch(() => {});
+    }
+  }
   const deadline = options?.timeoutMs
     ? Date.now() + options.timeoutMs
     : undefined;
@@ -926,6 +941,16 @@ function dumpUi(
 /** Icon-font glyphs carry no readable meaning, so they are not text. */
 function dropIconGlyphs(text: string): string {
   return isIconGlyph(text) ? "" : text;
+}
+
+async function getUiTreeViaDaemon(deviceId: string): Promise<UiElement[]> {
+  const port = await ensureDaemon(deviceId);
+  const payload = await request(port, "dump 0");
+  if (payload.startsWith("ERROR")) throw new Error(payload.trim());
+
+  const elements = parseDaemonTree(payload);
+  if (elements.length === 0) throw new Error("The daemon returned an empty tree.");
+  return elements;
 }
 
 function delay(ms: number): Promise<void> {
