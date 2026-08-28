@@ -12,7 +12,13 @@ interface Rect {
   height: number;
 }
 
-const MIN_USABLE_SIDE = 16;
+/**
+ * Android's minimum touch target is 48dp — roughly 144px at 3x density. A
+ * narrower strip technically sits inside the element but is not reliably
+ * tappable: aiming at a 16px sliver above a banner produced a tap that landed
+ * but did nothing. Below this, dismissing the cover is the only real fix.
+ */
+const MIN_USABLE_SIDE = 48;
 
 /**
  * A point inside `target` that `cover` does not overlap, so a tap can still

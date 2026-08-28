@@ -46,6 +46,14 @@ describe("findFreePoint", () => {
     expect(findFreePoint(CARD, almostFull)).toBeUndefined();
   });
 
+  it("rejects a strip narrower than a touch target", () => {
+    // Observed live: the LogBox banner left 16px of the button uncovered.
+    // The tap landed inside the element and still did nothing.
+    const button = makeElement({ x: 53, y: 2130, width: 975, height: 157 });
+    const banner = makeElement({ x: 26, y: 2146, width: 1028, height: 125 });
+    expect(findFreePoint(button, banner)).toBeUndefined();
+  });
+
   it("keeps the point inside the target", () => {
     const point = findFreePoint(CARD, BANNER)!;
     expect(point.x).toBeGreaterThanOrEqual(CARD.bounds.x);
