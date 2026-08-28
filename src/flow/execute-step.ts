@@ -5,6 +5,7 @@ import { describeSelector } from "./selector.js";
 import { describeNearMisses } from "../utils/similar-elements.js";
 import { readTree, invalidateTree } from "./tree-cache.js";
 import { verifyTypedText } from "../utils/verify-input.js";
+import { pollIntervalMs } from "../utils/poll-interval.js";
 import type { UiElement } from "../types.js";
 import type { FlowCondition, FlowContext, FlowSelector, FlowStep } from "./types.js";
 
@@ -13,7 +14,7 @@ export interface StepOutcome {
   detail?: string;
 }
 
-const POLL_MS = 400;
+
 const SCROLL_TIMEOUT_MS = 20_000;
 
 /** Steps that only read the screen — their cached tree stays valid afterwards. */
@@ -222,7 +223,7 @@ async function assertNotVisible(
     if (findMatch(tree, selector) === undefined) return ok();
     // Still there: only a fresh read can show it gone.
     invalidateTree(ctx);
-    await delay(POLL_MS);
+    await delay(pollIntervalMs());
   } while (Date.now() < deadline);
   return { status: "failed", detail: `still visible after ${timeoutMs}ms (${describeSelector(selector)})` };
 }
@@ -288,7 +289,7 @@ async function waitForMatch(
     // A miss means the screen has to change for this to succeed — never poll
     // the same cached tree twice.
     invalidateTree(ctx);
-    await delay(POLL_MS);
+    await delay(pollIntervalMs());
   } while (Date.now() < deadline);
   return undefined;
 }

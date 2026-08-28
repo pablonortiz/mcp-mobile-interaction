@@ -5,6 +5,10 @@ import {
   PLATFORM_DESCRIPTION,
 } from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
+import {
+  pollIntervalMs,
+  defaultScrollLimit,
+} from "../utils/poll-interval.js";
 import type { UiElement } from "../types.js";
 import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
@@ -114,7 +118,7 @@ export function registerPressKeyTool(server: McpServer) {
       if (key === "back" && beforeHash !== undefined) {
         try {
           if (!observe || observe === "none") {
-            await new Promise((resolve) => setTimeout(resolve, 500));
+            await new Promise((resolve) => setTimeout(resolve, pollIntervalMs()));
           }
 
           const afterTree = await driver.getUiTree(device_id);

@@ -1,5 +1,6 @@
 import type { UiElement } from "../types.js";
 import type { FlowContext } from "./types.js";
+import { isDaemonEnabled } from "../platforms/ui-daemon.js";
 
 const MAX_AGE_MS = 1_500;
 
@@ -17,6 +18,10 @@ const caches = new WeakMap<FlowContext, CachedTree>();
  * unchanged screen.
  */
 export async function readTree(ctx: FlowContext): Promise<UiElement[]> {
+  // The cache exists to avoid a ~2s dump. When a read costs ~4ms it buys
+  // nothing and only widens the window in which a stale tree can be served.
+  if (isDaemonEnabled()) return ctx.driver.getUiTree(ctx.deviceId);
+
   const cached = caches.get(ctx);
   if (cached && Date.now() - cached.capturedAt < MAX_AGE_MS) {
     return cached.tree;

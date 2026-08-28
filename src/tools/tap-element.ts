@@ -5,6 +5,10 @@ import {
   PLATFORM_DESCRIPTION,
 } from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
+import {
+  pollIntervalMs,
+  defaultScrollLimit,
+} from "../utils/poll-interval.js";
 import { uiTreeSafe } from "../utils/ui-tree-fallback.js";
 import type { Platform, UiElement } from "../types.js";
 import { performObservation } from "../utils/observe.js";
@@ -201,7 +205,7 @@ export function registerTapElementTool(server: McpServer) {
       let lastTree: UiElement[] = [];
 
       if (scroll_to_find) {
-        const scrollLimit = max_scrolls ?? 5;
+        const scrollLimit = max_scrolls ?? defaultScrollLimit();
         for (let i = 0; i <= scrollLimit; i++) {
           lastTree = await driver.getUiTree(device_id);
           const matches = lastTree.filter((el) => matchElement(el, criteria));
@@ -209,7 +213,7 @@ export function registerTapElementTool(server: McpServer) {
           if (target) break;
           if (i < scrollLimit) {
             await scrollOnce(platform, scroll_direction ?? "down", device_id, lastTree);
-            await new Promise((resolve) => setTimeout(resolve, 500));
+            await new Promise((resolve) => setTimeout(resolve, pollIntervalMs()));
           }
         }
 
@@ -231,7 +235,7 @@ export function registerTapElementTool(server: McpServer) {
           const matches = lastTree.filter((el) => matchElement(el, criteria));
           target = pickTarget(matches, matchIndex);
           if (target) break;
-          await new Promise((resolve) => setTimeout(resolve, 500));
+          await new Promise((resolve) => setTimeout(resolve, pollIntervalMs()));
         }
 
         if (!target) {

@@ -5,6 +5,10 @@ import {
   PLATFORM_DESCRIPTION,
 } from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
+import {
+  pollIntervalMs,
+  defaultScrollLimit,
+} from "../utils/poll-interval.js";
 import { resolveDeviceId } from "../utils/resolve-device.js";
 import { uiTreeSafe } from "../utils/ui-tree-fallback.js";
 import type { UiElement } from "../types.js";
@@ -93,7 +97,7 @@ export function registerFindElementTool(server: McpServer) {
       let lastTree: UiElement[] = [];
 
       if (scroll_to_find) {
-        const scrollLimit = max_scrolls ?? 5;
+        const scrollLimit = max_scrolls ?? defaultScrollLimit();
         for (let i = 0; i <= scrollLimit; i++) {
           lastTree = await driver.getUiTree(device_id);
           const matches = lastTree.filter((el) => matchElement(el, criteria));
@@ -103,7 +107,7 @@ export function registerFindElementTool(server: McpServer) {
           }
           if (i < scrollLimit) {
             await scrollOnce(platform, scroll_direction ?? "down", device_id, lastTree);
-            await new Promise((resolve) => setTimeout(resolve, 500));
+            await new Promise((resolve) => setTimeout(resolve, pollIntervalMs()));
           }
         }
       } else {
