@@ -1,6 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
+import { resolveDeviceId } from "../utils/resolve-device.js";
 import { ACTION } from "../utils/annotations.js";
 
 export function registerSetClipboardTool(server: McpServer) {
@@ -8,20 +13,21 @@ export function registerSetClipboardTool(server: McpServer) {
     "set_clipboard",
     "Set the device clipboard content. Useful for testing paste of URLs, tokens, OTP codes, etc. On iOS this targets the simulator's own pasteboard (not the host Mac's).",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
-        .describe("Device ID. Omit to use the first connected device."),
+        .describe("Device ID. Omit for the connected device."),
       text: z
         .string()
         .max(10000)
         .describe("Text to set in the clipboard (max 10,000 characters)"),
     },
     ACTION,
-    async ({ platform, device_id, text }) => {
+    async ({ platform: platformArg, device_id, text }) => {
+      const platform = await resolvePlatform(platformArg);
       const driver = getDriver(platform);
-      const deviceId = device_id ?? (await driver.getFirstDeviceId());
+      const deviceId = await resolveDeviceId(platform, device_id);
 
       await driver.setClipboard(deviceId, text);
 

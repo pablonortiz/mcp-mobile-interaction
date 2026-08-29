@@ -6,6 +6,10 @@
  * keycode mapping, device-list parsing, and screen-info parsing.
  */
 
+// This suite exercises the `uiautomator dump` path directly; the daemon has no
+// place in it and its startup would hang against mocked exec.
+process.env.MCP_MOBILE_FAST_TREE = "0";
+
 import { jest } from "@jest/globals";
 
 const mockRun = jest.fn<(file: string, args: string[], opts?: any) => Promise<string>>();
@@ -280,7 +284,7 @@ describe("getLogs", () => {
     const logLines = Array.from({ length: 100 }, (_, i) => `line ${i}`).join("\n");
     mockRun.mockResolvedValueOnce(logLines);
     const output = await androidMod.getLogs("dev1", { lines: 10 });
-    expect(argsOfCall(0)).toBe("-s dev1 logcat -d -v time");
+    expect(argsOfCall(0)).toBe("-s dev1 logcat -d -v time -t 10");
     expect(output.split("\n")).toHaveLength(10);
     expect(output).toContain("line 99");
     expect(output).not.toContain("line 89\n");
@@ -295,7 +299,39 @@ describe("getLogs", () => {
   it("uses global level filter when only level is provided", async () => {
     mockRun.mockResolvedValueOnce("error log");
     await androidMod.getLogs("dev1", { level: "error", lines: 20 });
-    expect(argsOfCall(0)).toBe("-s dev1 logcat -d -v time *:E");
+    expect(argsOfCall(0)).toBe("-s dev1 logcat -d -v time -t 800 *:E");
+  });
+
+  it("widens the -t window when a filter runs after the truncation", async () => {
+    mockRun.mockResolvedValueOnce("");
+    await androidMod.getLogs("dev1", { level: "error", lines: 50 });
+    // `-t` truncates before filters apply, so a filtered read must look further back
+    expect(argsOfCall(0)).toContain("-t 2000");
+  });
+
+  it("caps the window so the read cannot exceed maxBuffer", async () => {
+    mockRun.mockResolvedValueOnce("");
+    await androidMod.getLogs("dev1", { level: "error", lines: 500 });
+    expect(argsOfCall(0)).toContain("-t 20000");
+  });
+
+  it("omits -t when a tag filter already reduces volume device-side", async () => {
+    mockRun.mockResolvedValueOnce("");
+    await androidMod.getLogs("dev1", { tag: "ReactNativeJS", lines: 50 });
+    expect(argsOfCall(0)).toBe("-s dev1 logcat -d -v time -s ReactNativeJS");
+  });
+
+  it("pushes search to the device as a regex", async () => {
+    mockRun.mockResolvedValueOnce("");
+    await androidMod.getLogs("dev1", { search: "Fatal", lines: 50 });
+    expect(argsOfCall(0)).toContain("--regex Fatal");
+  });
+
+  it("raises maxBuffer well above the default for log reads", async () => {
+    mockRun.mockResolvedValueOnce("");
+    await androidMod.getLogs("dev1", { lines: 50 });
+    const opts = mockRun.mock.calls[0]?.[2] as { maxBuffer?: number };
+    expect(opts.maxBuffer).toBeGreaterThan(10 * 1024 * 1024);
   });
 });
 
@@ -359,9 +395,21 @@ describe("installApp", () => {
     mockRun.mockResolvedValueOnce("Success");
     const output = await androidMod.installApp("dev1", "/tmp/app.apk");
     expect(argsOfCall(0)).toBe("-s dev1 install -r /tmp/app.apk");
-    expect(output).toBe("Success");
+    expect(output).toContain("Success");
   });
-});
+
+  it("reports which APK was used, so a stale build is visible", async () => {
+    mockRun.mockResolvedValueOnce("Success");
+    const output = await androidMod.installApp("dev1", "/tmp/app.apk");
+    expect(output).toContain("APK: /tmp/app.apk");
+  });
+
+  it("keeps the APK provenance on a failed install", async () => {
+    mockRun.mockRejectedValueOnce(new Error("INSTALL_FAILED_INVALID_APK"));
+    await expect(androidMod.installApp("dev1", "/tmp/app.apk")).rejects.toThrow(
+      /INSTALL_FAILED_INVALID_APK[\s\S]*APK: \/tmp\/app.apk/,
+    );
+  });
 
 describe("uninstallApp", () => {
   it("sends adb uninstall", async () => {
@@ -556,13 +604,59 @@ describe("getScreenInfo", () => {
 // launchApp / openUrl
 // ---------------------------------------------------------------------------
 describe("launchApp", () => {
-  it("builds the correct monkey command", async () => {
-    mockRun.mockResolvedValueOnce("");
+  const FOREGROUND_DUMP =
+    "mCurrentFocus=Window{a b com.example.app/com.example.app.MainActivity}";
+
+  it("tries monkey first", async () => {
+    mockRun.mockResolvedValue(FOREGROUND_DUMP);
     await androidMod.launchApp("com.example.app", "dev1");
     expect(argsOfCall(0)).toBe(
       "-s dev1 shell monkey -p com.example.app -c android.intent.category.LAUNCHER 1"
     );
   });
+
+  it("falls back to the resolved activity when monkey fails", async () => {
+    mockRun
+      .mockRejectedValueOnce(new Error("monkey aborted"))
+      .mockResolvedValueOnce("com.example.app/.MainActivity")
+      .mockResolvedValue(FOREGROUND_DUMP);
+    await androidMod.launchApp("com.example.app", "dev1");
+    const startCall = mockRun.mock.calls.find((call) =>
+      (call[1] as string[]).join(" ").includes("am start -n"),
+    );
+    expect(startCall).toBeDefined();
+  }, 20_000);
+
+  it("treats a launch that never reaches the foreground as a failure", async () => {
+    mockRun.mockImplementation(async (_file, args) => {
+      const joined = (args as string[]).join(" ");
+      if (joined.includes("monkey")) return "";
+      if (joined.includes("mCurrentFocus") || joined.includes("dumpsys")) {
+        return "mCurrentFocus=Window{a b com.other.app/.Main}";
+      }
+      throw new Error("not available");
+    });
+    await expect(
+      androidMod.launchApp("com.example.app", "dev1"),
+    ).rejects.toThrow(/Could not launch com.example.app/);
+  }, 20_000);
+
+  it("names installed look-alikes when the package is wrong", async () => {
+    mockRun.mockImplementation(async (_file, args) => {
+      const joined = (args as string[]).join(" ");
+      if (joined.includes("pm list packages")) {
+        return "package:in.janis.wms.beta\npackage:in.janis.wms.qa";
+      }
+      if (joined.includes("monkey")) return "";
+      if (joined.includes("mCurrentFocus") || joined.includes("dumpsys")) {
+        return "mCurrentFocus=Window{a b com.other.app/.Main}";
+      }
+      throw new Error("not available");
+    });
+    await expect(
+      androidMod.launchApp("in.janis.wms.prod", "dev1"),
+    ).rejects.toThrow(/not installed. Installed and similar/);
+  }, 20_000);
 });
 
 describe("openUrl", () => {
@@ -606,10 +700,38 @@ describe("getUiTree", () => {
     expect(elements[1].resource_id).toBeUndefined();
   });
 
-  it("throws after all 4 strategies fail", async () => {
+  it("throws a typed error once every dump attempt fails", async () => {
     mockRun.mockRejectedValue(new Error("dump failed"));
     await expect(androidMod.getUiTree("dev1")).rejects.toThrow(
-      /Failed to parse UI tree XML/
+      /Failed to read the UI tree after \d+ dump attempts/,
     );
+  }, 15_000);
+
+  it("reports a non-idle screen as its own reason", async () => {
+    mockRun.mockRejectedValue(new Error("ERROR: could not get idle state."));
+    await expect(androidMod.getUiTree("dev1")).rejects.toThrow(
+      /never went idle/,
+    );
+  }, 15_000);
+
+  it("stops retrying once timeoutMs is spent", async () => {
+    mockRun.mockRejectedValue(new Error("dump failed"));
+    const started = Date.now();
+    await expect(
+      androidMod.getUiTree("dev1", { timeoutMs: 500 }),
+    ).rejects.toThrow(/dump attempts/);
+    expect(Date.now() - started).toBeLessThan(2000);
   });
-});
+
+  it("falls back to --compressed, which some animating screens still allow", async () => {
+    mockRun
+      .mockRejectedValueOnce(new Error("could not get idle state"))
+      .mockRejectedValueOnce(new Error("could not get idle state"))
+      .mockRejectedValueOnce(new Error("could not get idle state"))
+      .mockResolvedValueOnce(sampleXml);
+    await androidMod.getUiTree("dev1");
+    const compressedCall = mockRun.mock.calls.find((call) =>
+      (call[1] as string[]).includes("--compressed"),
+    );
+    expect(compressedCall).toBeDefined();
+  }, 15_000);

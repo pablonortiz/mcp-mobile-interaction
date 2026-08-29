@@ -1,5 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
 import * as android from "../platforms/android.js";
 import { getDriver } from "../platforms/driver.js";
 import { performObservation } from "../utils/observe.js";
@@ -11,11 +15,11 @@ export function registerRotateDeviceTool(server: McpServer) {
     "rotate_device",
     "Rotate the device screen to a fixed orientation (disables auto-rotate). Android only.",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
-        .describe("Device ID. Omit to use the first connected device."),
+        .describe("Device ID. Omit for the connected device."),
       orientation: z
         .enum(["portrait", "landscape", "reverse_portrait", "reverse_landscape"])
         .describe("Target orientation"),
@@ -25,7 +29,8 @@ export function registerRotateDeviceTool(server: McpServer) {
         .describe("Capture screenshot after rotating. Default: none"),
     },
     ACTION,
-    async ({ platform, device_id, orientation, observe }) => {
+    async ({ platform: platformArg, device_id, orientation, observe }) => {
+      const platform = await resolvePlatform(platformArg);
       if (platform === "ios") {
         return {
           content: [{

@@ -110,6 +110,126 @@ All tools accept a `platform` parameter (`"android"` or `"ios"`) and an optional
 | `wait_for_element_gone` | Poll until a matching element disappears (spinners, skeletons, dialogs) |
 | `wait_for_stable` | Poll until the screen stops changing (two consecutive UI snapshots match) |
 
+### Flow Runner
+
+| Tool | Description |
+|------|-------------|
+| `set_permissions` | Grant or revoke Android runtime permissions, so a flow can start from a clean install |
+| `dismiss_dev_overlays` | Close React Native LogBox overlays that intercept taps aimed at the app underneath |
+| `run_flow` | Run a declarative multi-step flow server-side in a single call — deterministic sequences (login, navigation) stop costing one LLM round-trip per tap |
+
+Flows use a subset of [Maestro's](https://docs.maestro.dev) YAML syntax, so they migrate to Maestro almost 1:1 if you later want a standalone e2e suite. Pass the flow as `flow_yaml` (inline YAML), `flow_file` (path to a versioned `.yaml`), or `steps` (JSON array).
+
+```yaml
+appId: com.example.app
+---
+- launchApp
+- tapOn: "Delivery"
+- tapOn:
+    text: "Permitir"          # known permission popup
+    optional: true            # skip silently if absent
+- runFlow:
+    when:
+      visible: "Novedades"    # conditional popup handling
+    commands:
+      - tapOn: "Cerrar"
+- scrollUntilVisible:
+    element:
+      id: "route_card"
+- tapOn:
+    id: "route_card"
+- assertVisible:
+    text: "Paradas"
+    timeout: 15000
+```
+
+**Supported commands**: `launchApp`, `tapOn`, `doubleTapOn`, `longPressOn`, `inputText`, `eraseText`, `assertVisible`, `assertNotVisible`, `extendedWaitUntil`, `scrollUntilVisible`, `swipe`, `back`, `pressKey`, `hideKeyboard`, `waitForAnimationToEnd`, `stopApp`, `clearState`, `openLink`, `runFlow` (inline `commands` or `file:`, with `when: visible/notVisible/platform`), `repeat` (`times` and/or `while:`), `retry` (`maxRetries` 0-3, default 1, with `commands`).
+
+**Composition & parameters** (v1.6):
+
+- `runFlow: segments/_login.yaml` (or `runFlow: {file: ..., env: {...}, when: ...}`) composes flow files; paths resolve relative to the referencing flow, with cycle detection and a nesting limit. Build a library of segments and chain them into `goto-*` / journey flows.
+- `${VAR}` placeholders resolve from the tool's `env` parameter, `runFlow` `env:`, or header `env:` defaults (that precedence order). Unknown variables fail the parse with the available names listed.
+- `repeat: {while: {notVisible: {id: home}}, times: 5, commands: [back]}` repeats while the condition holds (`times` caps iterations, default 10) — ideal for "press back until Home appears".
+
+**Tap safety & chaining** (v1.6.1):
+
+- `tapOn` prefers **clickable** matches when a selector hits several elements (headers/labels often match the same text earlier in the tree — the classic source of silent no-op taps), and the step report warns when the tapped element is not clickable or disabled.
+- `launchApp: {ifNotRunning: true}` skips the relaunch when the app is already in the foreground — chained flows stop re-paying the app start (~10-15s) and the JS runtime (e.g. injected network mocks) is preserved.
+- `doctor` now detects emulators whose `screencap` returns a uniform (black) frame — a known GPU issue where screenshots are useless but the UI tree keeps working.
+
+**Semantics** (divergences from Maestro, by design):
+
+- `text`/`id` selectors match as **case-insensitive substrings** (not exact regex) — consistent with `tap_element` and tolerant to copy changes.
+- Element steps **auto-wait** up to `default_timeout_ms` (default 10s) — no manual sleeps needed.
+- Execution stops at the first non-optional failure and returns the failing step **plus the current UI tree and foreground app**, so the agent can take over exactly where the flow diverged.
+- `dry_run: true` parses and lists the steps without touching a device — useful to validate a flow file.
+- Extensions: selectors also accept `type` (element type substring) and `clickable`; `assertVisible`/`tapOn` accept a per-step `timeout`.
+
+Not supported (v1): `runFlow` with `file:`, JavaScript conditions (`when: true:`), `point` combined with an element selector, and horizontal `scrollUntilVisible`.
+
+## Platform Support
+
+Android is the primary target. iOS works on **simulators**; on physical devices several operations have no CLI equivalent and fail with an explicit message rather than silently doing nothing.
+
+| Capability | Android | iOS simulator | iOS device |
+|---|---|---|---|
+| UI tree, taps, swipes, typing | ✅ | ✅ (needs `idb`) | ✅ (needs `idb`) |
+| Screenshots, recording | ✅ | ✅ | ✅ |
+| App lifecycle (launch/kill/clear) | ✅ | ✅ | ✅ |
+| Clipboard | ✅ | ✅ | ❌ |
+| Device logs | ✅ | ✅ | ❌ (use Console.app) |
+| Appearance (dark/light) | ✅ | ✅ | ❌ |
+| Foreground app | ✅ | ✅ | ❌ |
+| Runtime permissions | ✅ | ❌ (`xcrun simctl privacy`) | ❌ |
+| Drag and drop | ✅ | ❌ | ❌ |
+| Wi-Fi / mobile data / airplane / throttling | ✅ | ❌ | ❌ |
+| Rotation | ✅ | ❌ | ❌ |
+
+All iOS UI interaction requires `idb` (`brew install idb-companion && pip install fb-idb`); `doctor` reports whether it is present.
+
+## Fast UI Reads
+
+Tree reads go through a small daemon running on the device, not through `adb shell uiautomator dump`.
+
+The shell command restarts the instrumentation runtime and then waits a hardcoded second for idle on **every** call. Measured on device: 1.91 s of wall clock against 0.06 s of CPU — it is waiting, not working. On screens that never settle it does not just crawl, it fails: Android Settings' "About phone" answers `ERROR: could not get idle state` after 11 s, three times out of three.
+
+The daemon holds one `UiAutomation` connection open and answers over a socket:
+
+| | `uiautomator dump` | daemon |
+|---|---|---|
+| One tree read | ~1900 ms | **~4 ms** |
+| 21-step flow (same emulator) | 41.8 s | **4.3 s** |
+| 12 exploratory tool calls | 167.6 s | **7.6 s** |
+| "About phone" | fails | 50 elements in 233 ms |
+
+A 3.3 KB jar is pushed to `/data/local/tmp` and run with `app_process` — the same mechanism `scrcpy` uses, and the one `uiautomator dump` itself uses. **No APK is installed**, nothing is registered with the package manager, and `rm` undoes it entirely. No new dependencies: `adb`, as before.
+
+**The one caveat**: the daemon holds `UiAutomation` exclusively. While it runs, nothing else can use it on that device — not Appium, not Maestro, not the shell command. It is released when the server exits, and `MCP_MOBILE_FAST_TREE=0` disables it if you need those tools alongside. If it cannot start, reads fall back to the shell command automatically and `doctor` says so.
+
+## Reliability
+
+Behaviour worth knowing, most of it the result of failures measured in real sessions:
+
+- **`platform` is optional.** It is inferred from what is connected, and only required when an Android device and a *booted* iOS simulator are both present. `package` is optional too on `kill_app`, `clear_app_data` and `get_app_info`, defaulting to the foreground app.
+- **Ambiguous device selection fails instead of guessing.** With more than one device attached, tools require `device_id` and list the candidates by kind (emulator / usb / network). A network target is usually a TV on the same Wi-Fi — not the device you meant.
+- **A failed UI dump degrades instead of dead-ending.** `uiautomator` cannot read an animating screen. The dump retries with progressive backoff and a `--compressed` variant; if it still fails, tree-reading tools answer with the reason, the foreground app and a screenshot, so work can continue by coordinates.
+- **Selector failures name near-misses.** "Element not found" lists the closest labels on screen with a similarity score, and flags one that is `[disabled]`, `[not clickable]` or `[under an overlay]`.
+- **`launch_app` verifies the launch.** `monkey`, then the resolved activity, then a plain MAIN/LAUNCHER intent — each checked against the actual foreground app. A wrong package name is answered with the installed look-alikes.
+- **Log reads are capped at the source.** A full `logcat -d` routinely exceeds 10 MB (28 MB measured on a normal emulator) and used to fail every time. `search` runs device-side; `dump_to_file` covers the rare case that needs the whole buffer.
+- **Identical UI trees are not re-sent.** `get_ui_tree` and `get_screen_state` report an unchanged screen with its hash instead of the full tree. The tree is still read every call, so it is a fact, not a cache guess. `force_full` overrides.
+- **Dead frames are refused.** A uniform (black) screenshot returns the emulator GPU fix instead of a useless image, and `doctor` reports API level and GPU backend before a session starts.
+- **Taps aim clear of whatever covers the element.** When something is drawn over the target's centre, the tap moves to a free part of the element instead of firing into the cover; only a full cover is refused, pointing at `dismiss_dev_overlays`.
+- **`type_text` verifies what it wrote.** `uiautomator` reports a field's hint in the same attribute as its content, so an unchanged field cannot be read as "empty" — the tool re-reads the focused field and says plainly whether the text landed.
+- **Icon-font glyphs are not text.** Private Use Area codepoints render as blank everywhere but the device; they no longer pass the "has text" filter as empty strings.
+- **`observe: "on_change"`** returns the first screen that differs from the one before the action, which catches a toast a fixed delay would miss.
+- **Flows reuse an unchanged tree.** A dump costs ~2s; `assertVisible: X` followed by `tapOn: X` now pays for it once. Anything that touches the device invalidates it.
+- **Scrolling aims inside the scrollable container**, not at the centre of the screen — a list that does not occupy the middle would otherwise never move.
+- **Temp files are cleaned on startup.** Recordings are handed over as a path and were never removed; 226 MB from a single day were found sitting in the temp directory.
+- **A lookup that finds nothing says when the app is not on screen.** "No elements found" reads as a selector problem; being told the launcher is in the foreground stops the wrong investigation.
+- **The server exits with its client.** The watchdog follows the ancestor chain, not just the direct parent: an npm-installed server runs as `client → npm exec → node`, so watching ppid alone would watch the npm wrapper and outlive the session.
+- **`run_flow` clears dev overlays first** (`dismiss_dev_overlays`, default true). It stays a tool parameter rather than a YAML command so flows remain portable to Maestro, which has no such command.
+- **`retry` follows Maestro's shape** — a block with `maxRetries` (0-3), not a per-step flag. Wrapping the commands means the flow author decides what is safe to redo: re-running `inputText` alone appends to a field that took the text partially, while `eraseText` + `inputText` inside the block is idempotent. Wrapping large parts of a flow in `retry` masks real app problems.
+
 ## UI Tree Format
 
 UI trees are returned in a compact one-line-per-element format (~4x fewer tokens than JSON):

@@ -36,6 +36,14 @@ export interface PlatformDriver {
     durationMs?: number,
     deviceId?: string,
   ): Promise<void>;
+  dragAndDrop(
+    startX: number,
+    startY: number,
+    endX: number,
+    endY: number,
+    durationMs?: number,
+    deviceId?: string,
+  ): Promise<void>;
   typeText(text: string, deviceId?: string): Promise<TypeTextMethod>;
   pressKey(
     key?: string,
@@ -43,7 +51,10 @@ export interface PlatformDriver {
     keycode?: number,
     repeat?: number,
   ): Promise<void>;
-  getUiTree(deviceId?: string): Promise<UiElement[]>;
+  getUiTree(
+    deviceId?: string,
+    options?: { timeoutMs?: number },
+  ): Promise<UiElement[]>;
   getScreenInfo(deviceId?: string): Promise<ScreenInfo>;
   launchApp(pkg: string, deviceId?: string): Promise<void>;
   openUrl(url: string, deviceId?: string): Promise<void>;
@@ -63,7 +74,7 @@ export interface PlatformDriver {
   ): Promise<void>;
   setAppearance(deviceId: string, mode: "dark" | "light"): Promise<void>;
   getForegroundApp(deviceId: string): Promise<ForegroundApp>;
-  startRecording(deviceId?: string): Promise<string>;
+  startRecording(deviceId?: string, force?: boolean): Promise<string>;
   stopRecording(deviceId?: string): Promise<string>;
   clearTextField(deviceId?: string, maxChars?: number): Promise<number>;
 }

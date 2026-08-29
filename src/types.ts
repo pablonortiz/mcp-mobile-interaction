@@ -23,6 +23,8 @@ export interface UiElement {
   resource_id?: string;
   enabled?: boolean;
   focused?: boolean;
+  /** The element scrolls its own content — used to aim a swipe at it. */
+  scrollable?: boolean;
   is_overlay?: boolean;
 }
 
@@ -50,4 +52,5 @@ export interface LogOptions {
   tag?: string;
   level?: string;
   lines?: number;
+  search?: string;
 }

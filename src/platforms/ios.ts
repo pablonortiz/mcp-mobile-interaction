@@ -521,7 +521,10 @@ export async function pressKey(
   }
 }
 
-export async function getUiTree(deviceId?: string): Promise<UiElement[]> {
+export async function getUiTree(
+  deviceId?: string,
+  _options?: { timeoutMs?: number },
+): Promise<UiElement[]> {
   const id = await resolveDevice(deviceId);
   await requireIdb("UI tree inspection");
 
@@ -634,8 +637,12 @@ export async function openUrl(url: string, deviceId?: string): Promise<void> {
 
 const activeRecordings = new Map<string, { child: ChildProcess; path: string }>();
 
-export async function startRecording(deviceId?: string): Promise<string> {
+export async function startRecording(
+  deviceId?: string,
+  force = false,
+): Promise<string> {
   const id = await resolveDevice(deviceId);
+  if (force) activeRecordings.delete(id);
   if (activeRecordings.has(id)) {
     throw new Error(
       `A recording is already in progress on ${id}. Stop it first with action: "stop".`,
@@ -717,4 +724,10 @@ export async function clearTextField(
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function dragAndDrop(): Promise<void> {
+  throw new Error(
+    "Drag and drop is not available on iOS through simctl or idb. Use swipe with a long duration, or drive the gesture from the app under test.",
+  );
 }

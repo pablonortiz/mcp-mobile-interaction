@@ -37,10 +37,17 @@ import { registerSetAppearanceTool } from "./tools/set-appearance.js";
 import { registerRotateDeviceTool } from "./tools/rotate-device.js";
 import { registerClearTextTool } from "./tools/clear-text.js";
 import { registerDoctorTool } from "./tools/doctor.js";
+import { registerRunFlowTool } from "./tools/run-flow.js";
+import { registerDismissDevOverlaysTool } from "./tools/dismiss-dev-overlays.js";
+import { registerSetPermissionsTool } from "./tools/set-permissions.js";
+import { startParentWatchdog } from "./utils/watchdog.js";
+import { cleanupOrphanRecordings } from "./platforms/android.js";
+import { cleanupOldTempFiles } from "./utils/temp-cleanup.js";
+import { stopAllDaemons } from "./platforms/ui-daemon.js";
 
 const server = new McpServer({
   name: "mcp-mobile-interaction",
-  version: "1.4.0",
+  version: "2.0.0",
 });
 
 registerListDevicesTool(server);
@@ -77,8 +84,26 @@ registerSetAppearanceTool(server);
 registerRotateDeviceTool(server);
 registerClearTextTool(server);
 registerDoctorTool(server);
+registerRunFlowTool(server);
+registerDismissDevOverlaysTool(server);
+registerSetPermissionsTool(server);
+
+/** Releases the device's UiAutomation so other tools can use it again. */
+async function shutdown(): Promise<void> {
+  await stopAllDaemons().catch(() => {});
+  await cleanupOrphanRecordings().catch(() => {});
+}
 
 async function main() {
+  await startParentWatchdog(shutdown);
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    process.once(signal, () => {
+      void shutdown().finally(() => process.exit(0));
+    });
+  }
+  await cleanupOrphanRecordings();
+  void cleanupOldTempFiles();
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("mcp-mobile-interaction server running on stdio");

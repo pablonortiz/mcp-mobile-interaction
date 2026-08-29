@@ -1,5 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
 import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
@@ -10,20 +14,20 @@ export function registerLaunchAppTool(server: McpServer) {
     "launch_app",
     "Launch an app on the device by package name (Android) or bundle ID (iOS)",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
-        .describe("Device ID. Omit to use the first connected device."),
+        .describe("Device ID. Omit for the connected device."),
       package: z
         .string()
         .describe(
           "App package name (Android, e.g. com.example.app) or bundle ID (iOS, e.g. com.apple.mobilesafari)",
         ),
       observe: z
-        .enum(["none", "ui_tree", "screenshot", "both"])
+        .enum(["none", "ui_tree", "screenshot", "both", "on_change"])
         .optional()
-        .describe("Capture screen state after action. Default: none"),
+        .describe('Capture screen state after the action. "on_change" returns the first tree that differs — catches a toast a fixed delay would miss. Default: none'),
       observe_delay_ms: z
         .number()
         .int()
@@ -32,10 +36,11 @@ export function registerLaunchAppTool(server: McpServer) {
       observe_stabilize: z
         .boolean()
         .optional()
-        .describe("If true, wait for UI to stabilize instead of fixed delay. Default: false"),
+        .describe("Wait for the UI to settle instead of a fixed delay. Default: false"),
     },
     ACTION,
-    async ({ platform, device_id, package: pkg, observe, observe_delay_ms, observe_stabilize }) => {
+    async ({ platform: platformArg, device_id, package: pkg, observe, observe_delay_ms, observe_stabilize }) => {
+      const platform = await resolvePlatform(platformArg);
       await getDriver(platform).launchApp(pkg, device_id);
 
       const observation = await performObservation({

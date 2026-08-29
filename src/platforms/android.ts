@@ -12,7 +12,18 @@ import type {
   UiElement,
 } from "../types.js";
 import { annotateOverlays } from "../utils/overlay-detect.js";
-import { unescapeXml } from "../utils/xml.js";
+import { writeFile, stat } from "fs/promises";
+import { resolve as resolvePath } from "path";
+import { unescapeXml, isIconGlyph } from "../utils/xml.js";
+import {
+  ensureDaemon,
+  request,
+  stopDaemon,
+  isDaemonEnabled,
+  markUnavailable,
+  unavailableReason,
+} from "./ui-daemon.js";
+import { parseDaemonTree } from "./daemon-tree.js";
 
 const DEVICE_CACHE_TTL_MS = 10_000;
 let cachedFirstDevice: { id: string; timestamp: number } | undefined;
@@ -21,8 +32,57 @@ export function resetCaches(): void {
   cachedFirstDevice = undefined;
 }
 
-function adb(deviceId: string, args: string[], options?: { timeout?: number }) {
-  return run("adb", ["-s", deviceId, ...args], options);
+/** Names what is actually attached, so a wrong device_id is obvious. */
+async function describeAvailableDevices(wanted: string): Promise<string> {
+  try {
+    const devices = await listDevices();
+    const connected = devices.filter((device) => device.status === "device");
+    if (connected.length === 0) {
+      return "No Android devices are connected. Boot an emulator or plug in a device.";
+    }
+    return `${wanted} is not attached. Connected: ${connected
+      .map((device) => `${device.id} (${classifyDevice(device.id)})`)
+      .join(", ")}.`;
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Only adb's own "the device is gone" messages. A bare "not found" also comes
+ * from a missing shell command on the device, which must not be mistaken for
+ * a disconnect.
+ */
+const DEVICE_GONE_PATTERNS = [
+  /device '[^']*' not found/,
+  /device offline/,
+  /no devices\/emulators found/,
+  /device unauthorized/,
+  /device still connecting/,
+];
+
+function isDeviceGoneError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return DEVICE_GONE_PATTERNS.some((pattern) => pattern.test(message));
+}
+
+function adb(
+  deviceId: string,
+  args: string[],
+  options?: { timeout?: number; maxBuffer?: number },
+) {
+  return Promise.resolve(run("adb", ["-s", deviceId, ...args], options)).catch(
+    async (error: unknown) => {
+      if (!isDeviceGoneError(error)) throw error;
+      // The cached id outlived the device: drop it so the next call re-resolves
+      // instead of failing for another TTL.
+      if (cachedFirstDevice?.id === deviceId) resetCaches();
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}\n${await describeAvailableDevices(deviceId)}`,
+      );
+    },
+  );
 }
 
 export async function listDevices(): Promise<Device[]> {
@@ -47,6 +107,19 @@ export async function listDevices(): Promise<Device[]> {
   return devices;
 }
 
+export type DeviceKind = "emulator" | "usb" | "network";
+
+/**
+ * Network-attached targets are the dangerous ones: an Android TV on the same
+ * Wi-Fi shows up in `adb devices` exactly like a phone, and picking it
+ * silently means installing an APK or sending taps to the wrong device.
+ */
+export function classifyDevice(deviceId: string): DeviceKind {
+  if (deviceId.startsWith("emulator-")) return "emulator";
+  if (deviceId.includes(":")) return "network";
+  return "usb";
+}
+
 export async function getFirstDeviceId(): Promise<string> {
   if (
     cachedFirstDevice &&
@@ -63,6 +136,19 @@ export async function getFirstDeviceId(): Promise<string> {
     );
   }
 
+  // Never choose on the user's behalf when the choice can be wrong.
+  if (connected.length > 1) {
+    const listed = connected
+      .map(
+        (device) =>
+          `  ${device.id} (${classifyDevice(device.id)}${device.name && device.name !== device.id ? `, ${device.name}` : ""})`,
+      )
+      .join("\n");
+    throw new Error(
+      `${connected.length} Android devices are connected — pass device_id to say which one:\n${listed}\nNetwork targets are often a TV or a set-top box on the same Wi-Fi, not the device you meant.`,
+    );
+  }
+
   cachedFirstDevice = { id: connected[0].id, timestamp: Date.now() };
   return connected[0].id;
 }
@@ -73,8 +159,16 @@ async function resolveDevice(deviceId?: string): Promise<string> {
 
 export async function screenshot(deviceId?: string): Promise<Buffer> {
   const id = await resolveDevice(deviceId);
-  return runBuffer("adb", ["-s", id, "exec-out", "screencap", "-p"], {
-    timeout: 30_000,
+  return Promise.resolve(
+    runBuffer("adb", ["-s", id, "exec-out", "screencap", "-p"], {
+      timeout: 30_000,
+    }),
+  ).catch(async (error: unknown) => {
+    if (!isDeviceGoneError(error)) throw error;
+    if (cachedFirstDevice?.id === id) resetCaches();
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}\n${await describeAvailableDevices(id)}`,
+    );
   });
 }
 
@@ -143,6 +237,35 @@ export async function swipe(
 
 const NON_ASCII = /[^\x20-\x7E]/;
 const KEYCODE_PASTE = 279;
+
+/**
+ * Press-move-release, for reordering lists and dragging items. A plain swipe
+ * flicks; a drag holds long enough for the target to pick up the gesture.
+ */
+export async function dragAndDrop(
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+  durationMs = 1000,
+  deviceId?: string,
+): Promise<void> {
+  const id = await resolveDevice(deviceId);
+  await adb(
+    id,
+    [
+      "shell",
+      "input",
+      "draganddrop",
+      String(startX),
+      String(startY),
+      String(endX),
+      String(endY),
+      String(durationMs),
+    ],
+    { timeout: Math.max(30_000, durationMs + 10_000) },
+  );
+}
 
 export async function typeText(
   text: string,
@@ -255,24 +378,108 @@ const LOG_LEVEL_MAP: Record<string, string> = {
   error: "E",
 };
 
-export async function getLogs(
-  deviceId: string,
-  options: LogOptions,
-): Promise<string> {
+// A full `logcat -d` routinely exceeds exec's maxBuffer (28 MB measured on a
+// normal emulator vs. a 10 MB limit), so reads are always capped at the source.
+const LOGCAT_MAX_BUFFER = 64 * 1024 * 1024;
+const LOGCAT_WINDOW_MULTIPLIER = 40;
+const LOGCAT_MAX_WINDOW = 20_000;
+
+/**
+ * Size of the `-t` window to read. `-t` truncates the buffer *before* filters
+ * apply, so a filtered read must look at more lines than it returns.
+ */
+function logcatWindow(lines: number, filtered: boolean): number {
+  if (!filtered) return lines;
+  return Math.min(lines * LOGCAT_WINDOW_MULTIPLIER, LOGCAT_MAX_WINDOW);
+}
+
+function buildLogcatArgs(options: LogOptions): string[] {
   const args = ["logcat", "-d", "-v", "time"];
   const levelLetter = options.level
     ? (LOG_LEVEL_MAP[options.level] ?? "I")
     : undefined;
+  const lines = options.lines ?? 50;
 
+  // A tag filter runs device-side and cuts the volume by orders of magnitude,
+  // so it needs no window; everything else is filtered after `-t` truncates.
   if (options.tag) {
     args.push("-s", levelLetter ? `${options.tag}:${levelLetter}` : options.tag);
-  } else if (levelLetter) {
-    args.push(`*:${levelLetter}`);
+  } else {
+    args.push("-t", String(logcatWindow(lines, Boolean(levelLetter || options.search))));
+    if (levelLetter) args.push(`*:${levelLetter}`);
   }
 
-  const output = await adb(deviceId, args, { timeout: 30_000 });
+  // Device-side regex keeps the search from being limited by the window.
+  if (options.search) args.push("--regex", options.search);
+
+  return args;
+}
+
+export interface DeviceProfile {
+  apiLevel: number;
+  gpuMode?: string;
+  model?: string;
+  isEmulator: boolean;
+}
+
+/**
+ * Device traits worth knowing before a QA session: API level gates camera
+ * capture (the HAL crashes on <=29) and the GPU backend gates screencap.
+ */
+export async function getDeviceProfile(
+  deviceId: string,
+): Promise<DeviceProfile> {
+  const [sdk, egl, model] = await Promise.all([
+    getProp(deviceId, "ro.build.version.sdk"),
+    getProp(deviceId, "ro.hardware.egl"),
+    getProp(deviceId, "ro.product.model"),
+  ]);
+
+  return {
+    apiLevel: parseInt(sdk, 10) || 0,
+    gpuMode: egl || undefined,
+    model: model || undefined,
+    isEmulator: deviceId.startsWith("emulator-") || model.startsWith("sdk_"),
+  };
+}
+
+async function getProp(deviceId: string, prop: string): Promise<string> {
+  try {
+    const value = await adb(deviceId, ["shell", "getprop", prop], {
+      timeout: 5_000,
+    });
+    return value.trim();
+  } catch {
+    return "";
+  }
+}
+
+export async function getLogs(
+  deviceId: string,
+  options: LogOptions,
+): Promise<string> {
+  const output = await adb(deviceId, buildLogcatArgs(options), {
+    timeout: 30_000,
+    maxBuffer: LOGCAT_MAX_BUFFER,
+  });
   const lines = options.lines ?? 50;
   return output.split("\n").slice(-lines).join("\n");
+}
+
+/**
+ * Dumps the whole logcat buffer to a local file, for the cases a windowed read
+ * cannot serve. Returns the path and the byte count.
+ */
+export async function dumpLogsToFile(
+  deviceId: string,
+  filePath: string,
+): Promise<number> {
+  const output = await adb(deviceId, ["logcat", "-d", "-v", "time"], {
+    timeout: 120_000,
+    maxBuffer: LOGCAT_MAX_BUFFER,
+  });
+  await writeFile(filePath, output, "utf8");
+  return Buffer.byteLength(output, "utf8");
 }
 
 export async function clearLogs(deviceId: string): Promise<void> {
@@ -319,14 +526,141 @@ export async function killApp(
   await adb(deviceId, ["shell", "am", "force-stop", packageName]);
 }
 
+/** Shorthand names for the runtime permissions a QA flow actually hits. */
+const PERMISSION_ALIASES: Record<string, string[]> = {
+  camera: ["android.permission.CAMERA"],
+  location: [
+    "android.permission.ACCESS_FINE_LOCATION",
+    "android.permission.ACCESS_COARSE_LOCATION",
+  ],
+  background_location: ["android.permission.ACCESS_BACKGROUND_LOCATION"],
+  storage: [
+    "android.permission.READ_EXTERNAL_STORAGE",
+    "android.permission.WRITE_EXTERNAL_STORAGE",
+  ],
+  media: [
+    "android.permission.READ_MEDIA_IMAGES",
+    "android.permission.READ_MEDIA_VIDEO",
+  ],
+  notifications: ["android.permission.POST_NOTIFICATIONS"],
+  microphone: ["android.permission.RECORD_AUDIO"],
+  contacts: ["android.permission.READ_CONTACTS"],
+  phone: ["android.permission.READ_PHONE_STATE"],
+  bluetooth: [
+    "android.permission.BLUETOOTH_CONNECT",
+    "android.permission.BLUETOOTH_SCAN",
+  ],
+};
+
+export interface PermissionResult {
+  permission: string;
+  granted: boolean;
+  detail?: string;
+}
+
+/** Expands an alias, or passes through a fully qualified permission name. */
+export function expandPermission(name: string): string[] {
+  return PERMISSION_ALIASES[name.toLowerCase()] ?? [name];
+}
+
+export function knownPermissionAliases(): string[] {
+  return Object.keys(PERMISSION_ALIASES);
+}
+
+/**
+ * Grants or revokes runtime permissions so a flow can start from a clean
+ * install without a human tapping the system dialog. Permissions the app does
+ * not declare are reported rather than silently skipped — that mismatch is
+ * usually a typo or the wrong flavour.
+ */
+export async function setPermissions(
+  deviceId: string,
+  packageName: string,
+  permissions: string[],
+  grant: boolean,
+): Promise<PermissionResult[]> {
+  const declared = await declaredPermissions(deviceId, packageName);
+  const action = grant ? "grant" : "revoke";
+  const results: PermissionResult[] = [];
+
+  for (const permission of permissions.flatMap(expandPermission)) {
+    if (declared.size > 0 && !declared.has(permission)) {
+      results.push({
+        permission,
+        granted: false,
+        detail: "not declared by the app — nothing to change",
+      });
+      continue;
+    }
+    try {
+      await adb(deviceId, ["shell", "pm", action, packageName, permission]);
+      results.push({ permission, granted: grant });
+    } catch (error) {
+      results.push({
+        permission,
+        granted: false,
+        detail:
+          error instanceof Error ? error.message.split("\n").pop() : String(error),
+      });
+    }
+  }
+
+  return results;
+}
+
+async function declaredPermissions(
+  deviceId: string,
+  packageName: string,
+): Promise<Set<string>> {
+  try {
+    const output = await adb(deviceId, [
+      "shell",
+      "dumpsys",
+      "package",
+      packageName,
+    ]);
+    const matches = output.match(/android\.permission\.[A-Z_]+/g) ?? [];
+    return new Set(matches);
+  } catch {
+    return new Set();
+  }
+}
+
 export async function installApp(
   deviceId: string,
   apkPath: string,
 ): Promise<string> {
-  const output = await run("adb", ["-s", deviceId, "install", "-r", apkPath], {
-    timeout: 120_000,
-  });
-  return output.trim();
+  const provenance = await describeApk(apkPath);
+  try {
+    const output = await run(
+      "adb",
+      ["-s", deviceId, "install", "-r", apkPath],
+      { timeout: 120_000 },
+    );
+    return `${output.trim()}\n${provenance}`;
+  } catch (error) {
+    // Which APK, and how old, is the first thing to check on a failed install
+    // — a stale build or the wrong worktree is a recurring cause.
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}\n${provenance}`,
+    );
+  }
+}
+
+/** Absolute path, size and age of the APK, so a stale build is visible. */
+async function describeApk(apkPath: string): Promise<string> {
+  try {
+    const absolute = resolvePath(apkPath);
+    const info = await stat(absolute);
+    const ageMinutes = Math.round((Date.now() - info.mtimeMs) / 60_000);
+    const age =
+      ageMinutes < 60
+        ? `${ageMinutes} min old`
+        : `${(ageMinutes / 60).toFixed(1)} h old`;
+    return `APK: ${absolute} (${(info.size / 1024 / 1024).toFixed(1)} MB, built ${info.mtime.toISOString()}, ${age})`;
+  } catch {
+    return `APK: ${apkPath} (could not be read — check the path)`;
+  }
 }
 
 export async function uninstallApp(
@@ -515,50 +849,159 @@ export async function rotate(
   ]);
 }
 
-export async function getUiTree(deviceId?: string): Promise<UiElement[]> {
+/**
+ * Progressive backoff. The old fixed pair of 800 ms waits totalled 1.6 s, too
+ * short for a screen that animates continuously (a MapView, an endless spinner)
+ * where uiautomator reports "could not get idle state".
+ */
+const UI_DUMP_ATTEMPTS: Array<{ waitMs: number; mode: "tty" | "file" | "compressed" }> = [
+  { waitMs: 0, mode: "tty" },
+  { waitMs: 0, mode: "file" },
+  { waitMs: 300, mode: "compressed" },
+  { waitMs: 800, mode: "tty" },
+  { waitMs: 1500, mode: "file" },
+  { waitMs: 2500, mode: "compressed" },
+];
+
+export async function getUiTree(
+  deviceId?: string,
+  options?: { timeoutMs?: number },
+): Promise<UiElement[]> {
   const id = await resolveDevice(deviceId);
 
-  // Strategy: tty → file → wait+tty → wait+file
-  const strategies: Array<() => Promise<string | null>> = [
-    () => dumpUiViaTty(id),
-    () => dumpUiViaFile(id),
-    async () => {
-      await delay(800);
-      return dumpUiViaTty(id);
-    },
-    async () => {
-      await delay(800);
-      return dumpUiViaFile(id);
-    },
-  ];
-
-  for (const strategy of strategies) {
+  // The on-device daemon answers in single-digit milliseconds; `uiautomator
+  // dump` costs ~1.9s because it restarts the instrumentation runtime and
+  // waits a hardcoded second for idle on every call.
+  if (isDaemonEnabled() && !unavailableReason(id)) {
     try {
-      const xml = await strategy();
+      return await getUiTreeViaDaemon(id);
+    } catch (error) {
+      if (error instanceof NoActiveWindowError) {
+        throw new UiTreeUnavailableError("no-window", 1);
+      }
+      // The daemon holds UiAutomation exclusively, so it must be stopped before
+      // the command-line path can work at all. The device is then skipped for a
+      // while, so a device that cannot host it does not pay a failed startup on
+      // every read.
+      await stopDaemon(id).catch(() => {});
+      markUnavailable(id, error instanceof Error ? error.message : String(error));
+    }
+  }
+  const deadline = options?.timeoutMs
+    ? Date.now() + options.timeoutMs
+    : undefined;
+
+  let lastError: unknown;
+  let attempts = 0;
+
+  for (const attempt of UI_DUMP_ATTEMPTS) {
+    if (deadline && Date.now() + attempt.waitMs > deadline) break;
+    if (attempt.waitMs > 0) await delay(attempt.waitMs);
+    attempts++;
+
+    try {
+      const xml = await dumpUi(id, attempt.mode);
       if (xml) {
         const elements = parseUiXml(xml);
         if (elements.length > 0) return annotateOverlays(elements);
       }
-    } catch {
-      // Try next strategy
+    } catch (error) {
+      lastError = error;
     }
   }
 
-  throw new Error(
-    "Failed to parse UI tree XML from uiautomator dump after 4 attempts. The screen may be in transition — try again after a short delay.",
-  );
+  throw new UiTreeUnavailableError(inferDumpFailure(lastError), attempts);
+}
+
+export type UiTreeFailureReason =
+  | "no-idle"
+  | "device-gone"
+  | "no-window"
+  | "unknown";
+
+/** Carries why the dump failed so callers can degrade instead of just failing. */
+export class UiTreeUnavailableError extends Error {
+  constructor(
+    readonly reason: UiTreeFailureReason,
+    readonly attempts: number,
+  ) {
+    super(UI_TREE_FAILURE_MESSAGES[reason].replace("{n}", String(attempts)));
+    this.name = "UiTreeUnavailableError";
+  }
+}
+
+const UI_TREE_FAILURE_MESSAGES: Record<UiTreeFailureReason, string> = {
+  "no-idle":
+    "The screen never went idle after {n} dump attempts — something is animating (a map, a spinner, a transition). uiautomator cannot read a moving screen.",
+  "device-gone":
+    "The device stopped responding to adb after {n} dump attempts. Check that the emulator is still running.",
+  "no-window":
+    "No window is on screen — the display may be off, or the device may be mid-transition. Wake it and retry.",
+  unknown:
+    "Failed to read the UI tree after {n} dump attempts. The screen may be in transition.",
+};
+
+function inferDumpFailure(error: unknown): UiTreeFailureReason {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  if (message.includes("idle")) return "no-idle";
+  if (message.includes("not found") || message.includes("no devices"))
+    return "device-gone";
+  return "unknown";
+}
+
+function dumpUi(
+  deviceId: string,
+  mode: "tty" | "file" | "compressed",
+): Promise<string | null> {
+  if (mode === "file") return dumpUiViaFile(deviceId);
+  return dumpUiViaTty(deviceId, mode === "compressed");
+}
+
+/** Icon-font glyphs carry no readable meaning, so they are not text. */
+function dropIconGlyphs(text: string): string {
+  return isIconGlyph(text) ? "" : text;
+}
+
+/**
+ * Raised when the daemon worked but the device has nothing to read. It is a
+ * state of the screen, not a failure of the daemon, so it must not trigger the
+ * fallback — retrying the same thing through `uiautomator dump` costs ~11s and
+ * fails just the same.
+ */
+class NoActiveWindowError extends Error {}
+
+async function getUiTreeViaDaemon(deviceId: string): Promise<UiElement[]> {
+  const port = await ensureDaemon(deviceId);
+  const payload = await request(port, "dump 0");
+
+  if (payload.startsWith("ERROR no active window")) {
+    throw new NoActiveWindowError(
+      "No window is on screen — the display may be off, or the device may be mid-transition.",
+    );
+  }
+  if (payload.startsWith("ERROR")) throw new Error(payload.trim());
+
+  const elements = parseDaemonTree(payload);
+  if (elements.length === 0) throw new Error("The daemon returned an empty tree.");
+  return elements;
 }
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function dumpUiViaTty(deviceId: string): Promise<string | null> {
-  const output = await run(
-    "adb",
-    ["-s", deviceId, "exec-out", "uiautomator", "dump", "/dev/tty"],
-    { timeout: 30_000 },
-  );
+async function dumpUiViaTty(
+  deviceId: string,
+  compressed = false,
+): Promise<string | null> {
+  // --compressed skips non-interactive nodes: it succeeds on some animating
+  // screens where the full dump does not, and returns ~55% less XML.
+  const dumpArgs = compressed
+    ? ["uiautomator", "dump", "--compressed", "/dev/tty"]
+    : ["uiautomator", "dump", "/dev/tty"];
+  const output = await run("adb", ["-s", deviceId, "exec-out", ...dumpArgs], {
+    timeout: 30_000,
+  });
 
   const cleaned = output.replace(/\0/g, "").trim();
   return extractXml(cleaned);
@@ -602,6 +1045,7 @@ function parseUiXml(xml: string): UiElement[] {
     const text = extractAttr(attrs, "text") ?? "";
     const contentDesc = extractAttr(attrs, "content-desc") ?? "";
     const clickable = extractAttr(attrs, "clickable") === "true";
+    const scrollable = extractAttr(attrs, "scrollable") === "true";
     const boundsStr = extractAttr(attrs, "bounds") ?? "";
     const rawResourceId = extractAttr(attrs, "resource-id") ?? "";
     const enabled = extractAttr(attrs, "enabled") === "true";
@@ -626,7 +1070,7 @@ function parseUiXml(xml: string): UiElement[] {
     elements.push({
       index,
       type,
-      text: unescapeXml(displayText),
+      text: dropIconGlyphs(unescapeXml(displayText)),
       bounds: {
         x: x1,
         y: y1,
@@ -636,6 +1080,7 @@ function parseUiXml(xml: string): UiElement[] {
       center_x: Math.round((x1 + x2) / 2),
       center_y: Math.round((y1 + y2) / 2),
       clickable,
+      ...(scrollable ? { scrollable } : {}),
       resource_id: resourceId ? unescapeXml(resourceId) : undefined,
       enabled,
       focused,
@@ -697,20 +1142,136 @@ async function getRotation(deviceId: string): Promise<number> {
   }
 }
 
+/**
+ * Launches an app, verifying the result instead of assuming it. `monkey` alone
+ * is fragile — it fails on permissions, on device state, and on apps that do
+ * not declare a LAUNCHER category the way it expects — and a failed launch
+ * means the whole QA session never starts.
+ */
 export async function launchApp(
   packageName: string,
   deviceId?: string,
 ): Promise<void> {
   const id = await resolveDevice(deviceId);
-  await adb(id, [
+  const failures: string[] = [];
+
+  for (const strategy of LAUNCH_STRATEGIES) {
+    try {
+      await strategy(id, packageName);
+      if (await isInForeground(id, packageName)) return;
+      failures.push(`${strategy.name}: ran but the app did not come to front`);
+    } catch (error) {
+      failures.push(
+        `${strategy.name}: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`,
+      );
+    }
+  }
+
+  throw new Error(
+    `Could not launch ${packageName} on ${id}.\n${failures.join("\n")}\n${await suggestInstalledPackages(id, packageName)}`,
+  );
+}
+
+const LAUNCH_STRATEGIES: Array<
+  ((deviceId: string, packageName: string) => Promise<void>) & { name: string }
+> = [
+  async function monkey(deviceId, packageName) {
+    await adb(deviceId, [
+      "shell",
+      "monkey",
+      "-p",
+      packageName,
+      "-c",
+      "android.intent.category.LAUNCHER",
+      "1",
+    ]);
+  },
+  async function resolvedActivity(deviceId, packageName) {
+    const component = await resolveLaunchActivity(deviceId, packageName);
+    if (!component) throw new Error("no launchable activity resolved");
+    await adb(deviceId, ["shell", "am", "start", "-n", component]);
+  },
+  async function mainIntent(deviceId, packageName) {
+    await adb(deviceId, [
+      "shell",
+      "am",
+      "start",
+      "-a",
+      "android.intent.action.MAIN",
+      "-c",
+      "android.intent.category.LAUNCHER",
+      "-p",
+      packageName,
+    ]);
+  },
+];
+
+async function resolveLaunchActivity(
+  deviceId: string,
+  packageName: string,
+): Promise<string | undefined> {
+  const output = await adb(deviceId, [
     "shell",
-    "monkey",
-    "-p",
+    "cmd",
+    "package",
+    "resolve-activity",
+    "--brief",
     packageName,
-    "-c",
-    "android.intent.category.LAUNCHER",
-    "1",
   ]);
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.includes("/"));
+}
+
+const FOREGROUND_POLL_MS = 400;
+const FOREGROUND_ATTEMPTS = 8;
+
+async function isInForeground(
+  deviceId: string,
+  packageName: string,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < FOREGROUND_ATTEMPTS; attempt++) {
+    await delay(FOREGROUND_POLL_MS);
+    try {
+      const foreground = await getForegroundApp(deviceId);
+      if (foreground.package === packageName) return true;
+    } catch {
+      // Keep polling — the window may not be up yet.
+    }
+  }
+  return false;
+}
+
+/** Names look-alike installed packages, which catches the `.beta`/`.qa` typo. */
+async function suggestInstalledPackages(
+  deviceId: string,
+  packageName: string,
+): Promise<string> {
+  try {
+    const stem = packageName.split(".").slice(0, 3).join(".");
+    const output = await adb(deviceId, [
+      "shell",
+      "pm",
+      "list",
+      "packages",
+      stem,
+    ]);
+    const installed = output
+      .split("\n")
+      .map((line) => line.replace("package:", "").trim())
+      .filter(Boolean);
+
+    if (installed.length === 0) {
+      return `No installed package matches "${stem}". Check the package name, or install the APK first.`;
+    }
+    if (!installed.includes(packageName)) {
+      return `${packageName} is not installed. Installed and similar: ${installed.join(", ")}.`;
+    }
+    return `${packageName} is installed, so this is a launch failure rather than a wrong package name.`;
+  } catch {
+    return "";
+  }
 }
 
 export async function openUrl(url: string, deviceId?: string): Promise<void> {
@@ -730,12 +1291,53 @@ export async function openUrl(url: string, deviceId?: string): Promise<void> {
 const REMOTE_RECORDING_PATH = "/sdcard/mcp-mobile-recording.mp4";
 const activeRecordings = new Map<string, ChildProcess>();
 
-export async function startRecording(deviceId?: string): Promise<string> {
-  const id = await resolveDevice(deviceId);
-  if (activeRecordings.has(id)) {
-    throw new Error(
-      `A recording is already in progress on ${id}. Stop it first with action: "stop".`,
+/**
+ * Kills `screenrecord` processes left on devices by a previous server instance.
+ * The in-memory map dies with the process, so a device-side check is the only
+ * way to tell a real leftover from a lost handle.
+ */
+export async function cleanupOrphanRecordings(): Promise<void> {
+  try {
+    const devices = await listDevices();
+    await Promise.all(
+      devices
+        .filter((device) => device.status === "device")
+        .filter((device) => !activeRecordings.has(device.id))
+        .map((device) =>
+          adb(device.id, ["shell", "pkill", "-2", "screenrecord"], {
+            timeout: 5_000,
+          }).catch(() => {}),
+        ),
     );
+  } catch {
+    // No adb or no devices — nothing to clean up.
+  }
+}
+
+/** True when the device itself has a `screenrecord` running. */
+export async function isRecordingOnDevice(deviceId: string): Promise<boolean> {
+  try {
+    const output = await adb(deviceId, ["shell", "pidof", "screenrecord"], {
+      timeout: 5_000,
+    });
+    return output.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+export async function startRecording(
+  deviceId?: string,
+  force = false,
+): Promise<string> {
+  const id = await resolveDevice(deviceId);
+  if (activeRecordings.has(id) || (await isRecordingOnDevice(id))) {
+    if (!force) {
+      throw new Error(
+        `A recording is already in progress on ${id}. Stop it first with action: "stop", or pass force: true to discard it and start over.`,
+      );
+    }
+    await discardRecording(id);
   }
 
   const child = spawnProc("adb", [
@@ -760,17 +1362,33 @@ export async function startRecording(deviceId?: string): Promise<string> {
   return id;
 }
 
+/** Drops a recording without producing a file — used to recover a stuck device. */
+async function discardRecording(deviceId: string): Promise<void> {
+  const child = activeRecordings.get(deviceId);
+  activeRecordings.delete(deviceId);
+  await adb(deviceId, ["shell", "pkill", "-2", "screenrecord"]).catch(() => {});
+  if (child && child.exitCode === null) await waitForExit(child, 3000);
+  await adb(deviceId, ["shell", "rm", "-f", REMOTE_RECORDING_PATH]).catch(
+    () => {},
+  );
+}
+
 export async function stopRecording(deviceId?: string): Promise<string> {
   const id = await resolveDevice(deviceId);
   const child = activeRecordings.get(id);
-  if (!child) {
+  // The handle can be missing while the device still records — another server
+  // instance started it. Finalize by device-side signal in that case.
+  if (!child && !(await isRecordingOnDevice(id))) {
     throw new Error(
       `No active recording on ${id}. Start one with action: "start".`,
     );
   }
   activeRecordings.delete(id);
 
-  if (child.exitCode === null) {
+  if (!child) {
+    await adb(id, ["shell", "kill -2 $(pidof screenrecord)"]).catch(() => {});
+    await delay(1000);
+  } else if (child.exitCode === null) {
     // SIGINT on the device lets screenrecord finalize the mp4
     await adb(id, ["shell", "kill -2 $(pidof screenrecord)"]).catch(() =>
       child.kill(),

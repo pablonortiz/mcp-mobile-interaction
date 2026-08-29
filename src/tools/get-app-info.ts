@@ -1,6 +1,15 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
+import {
+  resolvePackage,
+  PACKAGE_DESCRIPTION,
+} from "../utils/resolve-package.js";
 import { getDriver } from "../platforms/driver.js";
+import { resolveDeviceId } from "../utils/resolve-device.js";
 import { READ_ONLY } from "../utils/annotations.js";
 
 export function registerGetAppInfoTool(server: McpServer) {
@@ -8,19 +17,26 @@ export function registerGetAppInfoTool(server: McpServer) {
     "get_app_info",
     "Check whether an app is installed and get its version (Android: versionName/versionCode from dumpsys; iOS simulator: CFBundle versions).",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
-        .describe("Device ID. Omit to use the first connected device."),
+        .describe("Device ID. Omit for the connected device."),
       package: z
         .string()
-        .describe("App package name (Android) or bundle ID (iOS)"),
+        .optional()
+        .describe(PACKAGE_DESCRIPTION),
     },
     READ_ONLY,
-    async ({ platform, device_id, package: packageName }) => {
+    async ({ platform: platformArg, device_id, package: packageArg }) => {
+      const platform = await resolvePlatform(platformArg);
+      const packageName = await resolvePackage(
+        packageArg,
+        platform,
+        device_id,
+      );
       const driver = getDriver(platform);
-      const deviceId = device_id ?? (await driver.getFirstDeviceId());
+      const deviceId = await resolveDeviceId(platform, device_id);
 
       const info = await driver.getAppInfo(deviceId, packageName);
 

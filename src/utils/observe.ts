@@ -4,7 +4,12 @@ import { compressScreenshot } from "./image.js";
 import { filterUiElements } from "./ui-filter.js";
 import type { ObservationResult } from "./format-response.js";
 
-export type ObserveMode = "none" | "ui_tree" | "screenshot" | "both";
+export type ObserveMode =
+  | "none"
+  | "ui_tree"
+  | "screenshot"
+  | "both"
+  | "on_change";
 
 export interface ObserveOptions {
   mode: ObserveMode;
@@ -15,6 +20,7 @@ export interface ObserveOptions {
   stabilizeTimeoutMs?: number;
   stabilizePollMs?: number;
   filterUi?: boolean;
+  previousTree?: UiElement[];
 }
 
 /**
@@ -24,6 +30,19 @@ export async function performObservation(
   options: ObserveOptions,
 ): Promise<ObservationResult | undefined> {
   if (options.mode === "none") return undefined;
+
+  // Catch the first screen that differs, instead of guessing a delay long
+  // enough to see the change but short enough to beat a toast disappearing.
+  if (options.mode === "on_change") {
+    const tree = await waitForChangedUiTree(
+      options.platform,
+      options.deviceId,
+      options.previousTree ?? [],
+      options.stabilizePollMs ?? 150,
+      options.stabilizeTimeoutMs ?? 5_000,
+    );
+    return { uiTree: filterUiElements(tree, !(options.filterUi ?? true)) };
+  }
 
   // Wait for UI to settle
   if (options.stabilize) {
@@ -91,6 +110,30 @@ export async function waitForStableUiTree(
 
   // Timeout reached — return the last captured tree
   return previousTree;
+}
+
+/**
+ * Polls until the tree differs from `previous`, returning the first changed
+ * snapshot. Falls back to the last reading if nothing changes in time.
+ */
+export async function waitForChangedUiTree(
+  platform: Platform,
+  deviceId: string | undefined,
+  previous: UiElement[],
+  pollIntervalMs: number,
+  timeoutMs: number,
+): Promise<UiElement[]> {
+  const driver = getDriver(platform);
+  const baseline = hashUiTree(previous);
+  const start = Date.now();
+  let latest = previous;
+
+  while (Date.now() - start < timeoutMs) {
+    latest = await driver.getUiTree(deviceId);
+    if (hashUiTree(latest) !== baseline) return latest;
+    await delay(pollIntervalMs);
+  }
+  return latest;
 }
 
 /**

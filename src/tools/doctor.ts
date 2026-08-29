@@ -1,7 +1,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { existsSync } from "fs";
 import { join } from "path";
+import { isUniformImage } from "../utils/image.js";
 import { run } from "../utils/exec.js";
+import {
+  ensureDaemon,
+  request,
+  isDaemonEnabled,
+  unavailableReason,
+} from "../platforms/ui-daemon.js";
 import * as android from "../platforms/android.js";
 import * as ios from "../platforms/ios.js";
 import { READ_ONLY } from "../utils/annotations.js";
@@ -10,6 +17,44 @@ interface Check {
   label: string;
   ok: boolean;
   detail: string;
+}
+
+/**
+ * Reports whether tree reads go through the on-device daemon (~4ms) or the
+ * shell command (~1900ms, and it fails on screens that never go idle).
+ */
+async function describeDaemon(
+  deviceId: string,
+): Promise<{ ok: boolean; detail: string }> {
+  if (!isDaemonEnabled()) {
+    return {
+      ok: true,
+      detail: "Disabled by MCP_MOBILE_FAST_TREE=0 — reads use `uiautomator dump` (~1.9s each).",
+    };
+  }
+
+  const blocked = unavailableReason(deviceId);
+  if (blocked) {
+    return {
+      ok: false,
+      detail: `Falling back to \`uiautomator dump\` on ${deviceId}: ${blocked}`,
+    };
+  }
+
+  try {
+    const port = await ensureDaemon(deviceId);
+    const started = Date.now();
+    await request(port, "dump 0");
+    return {
+      ok: true,
+      detail: `on-device daemon answering in ${Date.now() - started}ms (the shell command takes ~1900ms). While it runs, no other UiAutomator client — Appium, Maestro — can use ${deviceId}.`,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      detail: `Could not start the daemon on ${deviceId}: ${error instanceof Error ? error.message : String(error)}. Reads fall back to \`uiautomator dump\`.`,
+    };
+  }
 }
 
 export function registerDoctorTool(server: McpServer) {
@@ -49,8 +94,35 @@ export function registerDoctorTool(server: McpServer) {
           label: "Android devices",
           ok: connected.length > 0,
           detail: connected.length > 0
-            ? connected.map((d) => `${d.name} (${d.id})`).join(", ")
+            ? connected
+                .map(
+                  (d) =>
+                    `${d.name} (${d.id}, ${android.classifyDevice(d.id)})`,
+                )
+                .join(", ")
             : "No connected devices. Boot an emulator or plug in a device with ADB debugging.",
+        });
+
+        const networkTargets = connected.filter(
+          (d) => android.classifyDevice(d.id) === "network",
+        );
+        if (networkTargets.length > 0) {
+          checks.push({
+            label: "Network targets",
+            ok: false,
+            detail: `${networkTargets.map((d) => d.id).join(", ")} are attached over the network — often a TV or set-top box on the same Wi-Fi. Pass device_id explicitly so an install or a tap cannot land there.`,
+          });
+        }
+
+        checks.push({
+          label: "Target selection",
+          ok: connected.length === 1,
+          detail:
+            connected.length === 1
+              ? `${connected[0].id} will be used when device_id is omitted`
+              : connected.length === 0
+                ? "Nothing to select."
+                : `${connected.length} devices connected — device_id is required; tools will refuse to guess.`,
         });
       } catch (e: any) {
         checks.push({ label: "Android devices", ok: false, detail: e.message });
@@ -72,6 +144,42 @@ export function registerDoctorTool(server: McpServer) {
           ok: false,
           detail: "emulator binary not found under ANDROID_HOME/emulator.",
         });
+      }
+
+      // Screen capture sanity — emulators can boot into a state where screencap
+      // returns a uniform (black) frame while the UI tree keeps working.
+      try {
+        const devices = await android.listDevices();
+        const first = devices.find((d) => d.status === "device");
+        if (first) {
+          const profile = await android.getDeviceProfile(first.id);
+          checks.push({
+            label: "Device profile",
+            ok: profile.apiLevel >= 30,
+            detail:
+              `${first.id} — API ${profile.apiLevel}${profile.gpuMode ? `, GPU ${profile.gpuMode}` : ""}` +
+              (profile.apiLevel <= 29
+                ? ". Camera capture crashes the emulator HAL on API <=29 (SIGSEGV in the JPEG compressor) — use an API 30+ AVD for photo flows."
+                : ""),
+          });
+          const uniform = await isUniformImage(await android.screenshot(first.id));
+          const daemonState = await describeDaemon(first.id);
+          checks.push({
+            label: "Fast UI reads",
+            ok: daemonState.ok,
+            detail: daemonState.detail,
+          });
+
+          checks.push({
+            label: "Screen capture",
+            ok: !uniform,
+            detail: uniform
+              ? `screencap on ${first.id} returns a uniform (likely black) frame — known emulator GPU issue. Screenshots will be useless until a cold boot; the UI tree is unaffected.`
+              : `screencap on ${first.id} returns real pixels`,
+          });
+        }
+      } catch {
+        // No device or capture failed — the devices check above already covers it.
       }
 
       // xcrun simctl

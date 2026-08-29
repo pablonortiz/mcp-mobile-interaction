@@ -1,12 +1,19 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
+import { uiTreeSafe } from "../utils/ui-tree-fallback.js";
 import type { UiElement } from "../types.js";
 import { performObservation } from "../utils/observe.js";
 import { filterUiElements } from "../utils/ui-filter.js";
 import { formatUiTree } from "../utils/format-ui.js";
 import { buildResponseContent } from "../utils/format-response.js";
 import { matchElement, describeCriteria, type MatchCriteria } from "../utils/element-matcher.js";
+import { describeNearMisses } from "../utils/similar-elements.js";
+import { describeRuntimeState } from "../utils/runtime-state.js";
 import { READ_ONLY } from "../utils/annotations.js";
 
 export function registerWaitForElementTool(server: McpServer) {
@@ -14,11 +21,11 @@ export function registerWaitForElementTool(server: McpServer) {
     "wait_for_element",
     "Poll the UI tree until an element matching the criteria appears on screen. Returns matched elements and optionally the full UI tree or screenshot.",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
-        .describe("Device ID. Omit to use the first connected device."),
+        .describe("Device ID. Omit for the connected device."),
       text_contains: z
         .string()
         .optional()
@@ -43,20 +50,20 @@ export function registerWaitForElementTool(server: McpServer) {
         .number()
         .int()
         .optional()
-        .describe("Maximum time to wait in ms. Default: 10000"),
+        .describe("Maximum time to wait in ms. Default: 30000 — app start, first network-backed list load and login flows routinely exceed 10s"),
       poll_interval_ms: z
         .number()
         .int()
         .optional()
         .describe("Polling interval in ms. Default: 500"),
       observe: z
-        .enum(["none", "ui_tree", "screenshot", "both"])
+        .enum(["none", "ui_tree", "screenshot", "both", "on_change"])
         .optional()
         .describe("Additional observation after element found. Default: none"),
     },
     READ_ONLY,
-    async ({
-      platform,
+    uiTreeSafe("wait for the element", async ({
+      platform: platformArg,
       device_id,
       text_contains,
       text_exact,
@@ -67,8 +74,9 @@ export function registerWaitForElementTool(server: McpServer) {
       poll_interval_ms,
       observe,
     }) => {
+      const platform = await resolvePlatform(platformArg);
       const driver = getDriver(platform);
-      const timeout = timeout_ms ?? 10_000;
+      const timeout = timeout_ms ?? 30_000;
       const pollInterval = poll_interval_ms ?? 500;
       const start = Date.now();
       const criteria: MatchCriteria = {
@@ -112,11 +120,11 @@ export function registerWaitForElementTool(server: McpServer) {
         content: [
           {
             type: "text" as const,
-            text: `Timeout after ${timeout}ms: no element found matching criteria (${describeCriteria(criteria)}). ${formatUiTree(filtered, "Last UI tree")}`,
+            text: `Timeout after ${timeout}ms: no element found matching criteria (${describeCriteria(criteria)}).${describeNearMisses(lastTree, criteria)}${describeRuntimeState(lastTree)} ${formatUiTree(filtered, "Last UI tree")}`,
           },
         ],
         isError: true,
       };
-    },
+    }),
   );
 }

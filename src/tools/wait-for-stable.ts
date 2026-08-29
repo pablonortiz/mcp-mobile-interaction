@@ -1,6 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
+import { uiTreeSafe } from "../utils/ui-tree-fallback.js";
 import { waitForStableUiTree } from "../utils/observe.js";
 import { filterUiElements } from "../utils/ui-filter.js";
 import { formatUiTree } from "../utils/format-ui.js";
@@ -12,16 +17,16 @@ export function registerWaitForStableTool(server: McpServer) {
     "wait_for_stable",
     "Wait until the screen stops changing (two consecutive UI tree snapshots are identical). Returns the stable UI tree and optionally a screenshot.",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
-        .describe("Device ID. Omit to use the first connected device."),
+        .describe("Device ID. Omit for the connected device."),
       timeout_ms: z
         .number()
         .int()
         .optional()
-        .describe("Maximum time to wait in ms. Default: 10000"),
+        .describe("Maximum time to wait in ms. Default: 10000 — this waits out animation, not network"),
       poll_interval_ms: z
         .number()
         .int()
@@ -37,14 +42,15 @@ export function registerWaitForStableTool(server: McpServer) {
         .describe("Filter UI tree to relevant elements only. Default: true"),
     },
     READ_ONLY,
-    async ({
-      platform,
+    uiTreeSafe("wait for the screen to settle", async ({
+      platform: platformArg,
       device_id,
       timeout_ms,
       poll_interval_ms,
       include_screenshot,
       filter_ui,
     }) => {
+      const platform = await resolvePlatform(platformArg);
       const tree = await waitForStableUiTree(
         platform,
         device_id,
@@ -79,6 +85,6 @@ export function registerWaitForStableTool(server: McpServer) {
       }
 
       return { content };
-    },
+    }),
   );
 }

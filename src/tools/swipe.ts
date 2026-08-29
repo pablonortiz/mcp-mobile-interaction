@@ -1,5 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
 import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
@@ -10,11 +14,11 @@ export function registerSwipeTool(server: McpServer) {
     "swipe",
     "Swipe on the device screen. Provide explicit coordinates or a direction (up/down/left/right) to auto-compute from screen center.",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
-        .describe("Device ID. Omit to use the first connected device."),
+        .describe("Device ID. Omit for the connected device."),
       start_x: z
         .number()
         .optional()
@@ -45,15 +49,19 @@ export function registerSwipeTool(server: McpServer) {
         .describe(
           "Swipe direction. Auto-computes coordinates from screen center. Overrides explicit coordinates.",
         ),
+      drag: z
+        .boolean()
+        .optional()
+        .describe("Press, move and release instead of flicking — for reordering lists and dragging items. Android only. Default: false"),
       duration_ms: z
         .number()
         .int()
         .optional()
         .describe("Duration of the swipe in milliseconds. Default: 300"),
       observe: z
-        .enum(["none", "ui_tree", "screenshot", "both"])
+        .enum(["none", "ui_tree", "screenshot", "both", "on_change"])
         .optional()
-        .describe("Capture screen state after action. Default: none"),
+        .describe('Capture screen state after the action. "on_change" returns the first tree that differs — catches a toast a fixed delay would miss. Default: none'),
       observe_delay_ms: z
         .number()
         .int()
@@ -62,11 +70,11 @@ export function registerSwipeTool(server: McpServer) {
       observe_stabilize: z
         .boolean()
         .optional()
-        .describe("If true, wait for UI to stabilize instead of fixed delay. Default: false"),
+        .describe("Wait for the UI to settle instead of a fixed delay. Default: false"),
     },
     ACTION,
     async ({
-      platform,
+      platform: platformArg,
       device_id,
       start_x,
       start_y,
@@ -75,12 +83,14 @@ export function registerSwipeTool(server: McpServer) {
       screenshot_scale,
       direction,
       duration_ms,
+      drag,
       observe,
       observe_delay_ms,
       observe_stabilize,
     }) => {
+      const platform = await resolvePlatform(platformArg);
       const driver = getDriver(platform);
-      const duration = duration_ms ?? 300;
+      const duration = duration_ms ?? (drag ? 1000 : 300);
       const scaleFn = (v: number) =>
         screenshot_scale ? Math.round(v / screenshot_scale) : Math.round(v);
       let sx: number, sy: number, ex: number, ey: number;
@@ -130,7 +140,11 @@ export function registerSwipeTool(server: McpServer) {
         ey = scaleFn(end_y);
       }
 
-      await driver.swipe(sx, sy, ex, ey, duration, device_id);
+      if (drag) {
+        await driver.dragAndDrop(sx, sy, ex, ey, duration, device_id);
+      } else {
+        await driver.swipe(sx, sy, ex, ey, duration, device_id);
+      }
 
       const observation = await performObservation({
         mode: observe ?? "none",
@@ -142,7 +156,7 @@ export function registerSwipeTool(server: McpServer) {
 
       return {
         content: buildResponseContent(
-          `Swiped from (${sx}, ${sy}) to (${ex}, ${ey}) over ${duration}ms on ${platform} device`,
+          `${drag ? "Dragged" : "Swiped"} from (${sx}, ${sy}) to (${ex}, ${ey}) over ${duration}ms on ${platform} device`,
           observation,
         ),
       };

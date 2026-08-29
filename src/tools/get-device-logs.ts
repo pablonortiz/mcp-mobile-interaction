@@ -1,18 +1,25 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
+import { tmpdir } from "os";
+import { join } from "path";
 import * as android from "../platforms/android.js";
 import { getDriver } from "../platforms/driver.js";
+import { resolveDeviceId } from "../utils/resolve-device.js";
 
 export function registerGetDeviceLogsTool(server: McpServer) {
   server.tool(
     "get_device_logs",
     "Get OS-level device logs. Android: logcat. iOS: log show (simulators only). Captures native logs (crashes, ANRs, system events, SDK logs) — different from JavaScript console logs.",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
-        .describe("Device ID. Omit to use the first connected device."),
+        .describe("Device ID. Omit for the connected device."),
       tag: z
         .string()
         .optional()
@@ -36,10 +43,15 @@ export function registerGetDeviceLogsTool(server: McpServer) {
         .boolean()
         .optional()
         .describe("Clear the log buffer before reading (Android only). Useful to capture only new logs from this point forward. Default: false"),
+      dump_to_file: z
+        .boolean()
+        .optional()
+        .describe("Android only. Write the entire log buffer to a local file and return its path plus a summary, instead of returning log lines. Use when the windowed read is not enough. Default: false"),
     },
-    async ({ platform, device_id, tag, search, level, lines, clear }) => {
+    async ({ platform: platformArg, device_id, tag, search, level, lines, clear, dump_to_file }) => {
+      const platform = await resolvePlatform(platformArg);
       const driver = getDriver(platform);
-      const deviceId = device_id ?? (await driver.getFirstDeviceId());
+      const deviceId = await resolveDeviceId(platform, device_id);
 
       let clearWarning: string | undefined;
 
@@ -62,10 +74,26 @@ export function registerGetDeviceLogsTool(server: McpServer) {
         }
       }
 
-      let logOutput = await driver.getLogs(deviceId, { tag, level, lines });
+      if (dump_to_file && platform === "android") {
+        const filePath = join(tmpdir(), `logcat-${deviceId.replace(/[^\w.-]/g, "_")}-${process.pid}.log`);
+        const bytes = await android.dumpLogsToFile(deviceId, filePath);
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Full log buffer written to ${filePath} (${(bytes / 1024 / 1024).toFixed(1)} MB). Read or grep that file directly.`,
+          }],
+        };
+      }
 
-      // Apply search filter
-      if (search) {
+      // Android filters device-side; iOS has no equivalent, so it filters here.
+      let logOutput = await driver.getLogs(deviceId, {
+        tag,
+        level,
+        lines,
+        search: platform === "android" ? search : undefined,
+      });
+
+      if (search && platform !== "android") {
         const searchLower = search.toLowerCase();
         const filtered = logOutput
           .split("\n")

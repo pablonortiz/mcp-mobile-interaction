@@ -1,7 +1,16 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
-import { compressScreenshot, type CropRegion } from "../utils/image.js";
+import {
+  compressScreenshot,
+  isUniformImage,
+  BLACK_FRAME_HINT,
+  type CropRegion,
+} from "../utils/image.js";
 import { matchElement } from "../utils/element-matcher.js";
 import { READ_ONLY } from "../utils/annotations.js";
 
@@ -10,11 +19,11 @@ export function registerScreenshotTool(server: McpServer) {
     "screenshot",
     "Capture a screenshot from an Android or iOS device/emulator/simulator. Returns the image as base64 JPEG. Optionally crop to a specific UI element (token-efficient way to inspect one component).",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
-        .describe("Device ID. Omit to use the first connected device."),
+        .describe("Device ID. Omit for the connected device."),
       quality: z
         .number()
         .min(1)
@@ -43,7 +52,7 @@ export function registerScreenshotTool(server: McpServer) {
     },
     READ_ONLY,
     async ({
-      platform,
+      platform: platformArg,
       device_id,
       quality,
       scale,
@@ -51,6 +60,7 @@ export function registerScreenshotTool(server: McpServer) {
       crop_text,
       crop_padding,
     }) => {
+      const platform = await resolvePlatform(platformArg);
       const driver = getDriver(platform);
       const wantsCrop = Boolean(crop_resource_id || crop_text);
 
@@ -90,6 +100,12 @@ export function registerScreenshotTool(server: McpServer) {
       const effectiveQuality = quality ?? (wantsCrop ? 80 : 50);
 
       const rawBuffer = await driver.screenshot(device_id);
+      if (await isUniformImage(rawBuffer)) {
+        return {
+          content: [{ type: "text" as const, text: BLACK_FRAME_HINT }],
+          isError: true,
+        };
+      }
       const { base64, width, height, nativeWidth, nativeHeight } =
         await compressScreenshot(rawBuffer, {
           quality: effectiveQuality,

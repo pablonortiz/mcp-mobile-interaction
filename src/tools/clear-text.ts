@@ -1,5 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  resolvePlatform,
+  PLATFORM_DESCRIPTION,
+} from "../utils/resolve-platform.js";
 import { getDriver } from "../platforms/driver.js";
 import { performObservation } from "../utils/observe.js";
 import { buildResponseContent } from "../utils/format-response.js";
@@ -10,11 +14,11 @@ export function registerClearTextTool(server: McpServer) {
     "clear_text",
     "Clear the currently focused text field. On Android it reads the focused element's text length from the UI tree and deletes accordingly (move to end + backspaces).",
     {
-      platform: z.enum(["android", "ios"]).describe("Target platform"),
+      platform: z.enum(["android", "ios"]).optional().describe(PLATFORM_DESCRIPTION),
       device_id: z
         .string()
         .optional()
-        .describe("Device ID. Omit to use the first connected device."),
+        .describe("Device ID. Omit for the connected device."),
       max_chars: z
         .number()
         .int()
@@ -23,7 +27,7 @@ export function registerClearTextTool(server: McpServer) {
         .optional()
         .describe("Fallback number of deletions when the field length cannot be determined. Default: 100 (Android) / 50 (iOS)"),
       observe: z
-        .enum(["none", "ui_tree", "screenshot", "both"])
+        .enum(["none", "ui_tree", "screenshot", "both", "on_change"])
         .optional()
         .describe("Capture screen state after clearing. Default: none"),
       observe_delay_ms: z
@@ -33,7 +37,8 @@ export function registerClearTextTool(server: McpServer) {
         .describe("Ms to wait before observing. Default: 500"),
     },
     ACTION,
-    async ({ platform, device_id, max_chars, observe, observe_delay_ms }) => {
+    async ({ platform: platformArg, device_id, max_chars, observe, observe_delay_ms }) => {
+      const platform = await resolvePlatform(platformArg);
       const deleted = await getDriver(platform).clearTextField(device_id, max_chars);
 
       const observation = await performObservation({
