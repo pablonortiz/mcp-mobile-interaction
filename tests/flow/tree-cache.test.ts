@@ -1,3 +1,8 @@
+// The cache only exists on the `uiautomator dump` path — under the daemon a
+// read costs ~4ms and the cache turns itself off.
+process.env.MCP_MOBILE_FAST_TREE = "0";
+
+
 import { jest } from "@jest/globals";
 import { readTree, invalidateTree } from "../../src/flow/tree-cache.js";
 import type { FlowContext } from "../../src/flow/types.js";

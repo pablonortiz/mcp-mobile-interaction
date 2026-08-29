@@ -15,7 +15,14 @@ import { annotateOverlays } from "../utils/overlay-detect.js";
 import { writeFile, stat } from "fs/promises";
 import { resolve as resolvePath } from "path";
 import { unescapeXml, isIconGlyph } from "../utils/xml.js";
-import { ensureDaemon, request, stopDaemon, isDaemonEnabled } from "./ui-daemon.js";
+import {
+  ensureDaemon,
+  request,
+  stopDaemon,
+  isDaemonEnabled,
+  markUnavailable,
+  unavailableReason,
+} from "./ui-daemon.js";
 import { parseDaemonTree } from "./daemon-tree.js";
 
 const DEVICE_CACHE_TTL_MS = 10_000;
@@ -865,13 +872,19 @@ export async function getUiTree(
   // The on-device daemon answers in single-digit milliseconds; `uiautomator
   // dump` costs ~1.9s because it restarts the instrumentation runtime and
   // waits a hardcoded second for idle on every call.
-  if (isDaemonEnabled()) {
+  if (isDaemonEnabled() && !unavailableReason(id)) {
     try {
       return await getUiTreeViaDaemon(id);
-    } catch {
-      // The daemon holds UiAutomation exclusively, so it must be stopped
-      // before the command-line path can work at all.
+    } catch (error) {
+      if (error instanceof NoActiveWindowError) {
+        throw new UiTreeUnavailableError("no-window", 1);
+      }
+      // The daemon holds UiAutomation exclusively, so it must be stopped before
+      // the command-line path can work at all. The device is then skipped for a
+      // while, so a device that cannot host it does not pay a failed startup on
+      // every read.
       await stopDaemon(id).catch(() => {});
+      markUnavailable(id, error instanceof Error ? error.message : String(error));
     }
   }
   const deadline = options?.timeoutMs
@@ -900,7 +913,11 @@ export async function getUiTree(
   throw new UiTreeUnavailableError(inferDumpFailure(lastError), attempts);
 }
 
-export type UiTreeFailureReason = "no-idle" | "device-gone" | "unknown";
+export type UiTreeFailureReason =
+  | "no-idle"
+  | "device-gone"
+  | "no-window"
+  | "unknown";
 
 /** Carries why the dump failed so callers can degrade instead of just failing. */
 export class UiTreeUnavailableError extends Error {
@@ -918,6 +935,8 @@ const UI_TREE_FAILURE_MESSAGES: Record<UiTreeFailureReason, string> = {
     "The screen never went idle after {n} dump attempts — something is animating (a map, a spinner, a transition). uiautomator cannot read a moving screen.",
   "device-gone":
     "The device stopped responding to adb after {n} dump attempts. Check that the emulator is still running.",
+  "no-window":
+    "No window is on screen — the display may be off, or the device may be mid-transition. Wake it and retry.",
   unknown:
     "Failed to read the UI tree after {n} dump attempts. The screen may be in transition.",
 };
@@ -943,9 +962,23 @@ function dropIconGlyphs(text: string): string {
   return isIconGlyph(text) ? "" : text;
 }
 
+/**
+ * Raised when the daemon worked but the device has nothing to read. It is a
+ * state of the screen, not a failure of the daemon, so it must not trigger the
+ * fallback — retrying the same thing through `uiautomator dump` costs ~11s and
+ * fails just the same.
+ */
+class NoActiveWindowError extends Error {}
+
 async function getUiTreeViaDaemon(deviceId: string): Promise<UiElement[]> {
   const port = await ensureDaemon(deviceId);
   const payload = await request(port, "dump 0");
+
+  if (payload.startsWith("ERROR no active window")) {
+    throw new NoActiveWindowError(
+      "No window is on screen — the display may be off, or the device may be mid-transition.",
+    );
+  }
   if (payload.startsWith("ERROR")) throw new Error(payload.trim());
 
   const elements = parseDaemonTree(payload);

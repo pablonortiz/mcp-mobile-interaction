@@ -43,6 +43,7 @@ import { registerSetPermissionsTool } from "./tools/set-permissions.js";
 import { startParentWatchdog } from "./utils/watchdog.js";
 import { cleanupOrphanRecordings } from "./platforms/android.js";
 import { cleanupOldTempFiles } from "./utils/temp-cleanup.js";
+import { stopAllDaemons } from "./platforms/ui-daemon.js";
 
 const server = new McpServer({
   name: "mcp-mobile-interaction",
@@ -87,8 +88,19 @@ registerRunFlowTool(server);
 registerDismissDevOverlaysTool(server);
 registerSetPermissionsTool(server);
 
+/** Releases the device's UiAutomation so other tools can use it again. */
+async function shutdown(): Promise<void> {
+  await stopAllDaemons().catch(() => {});
+  await cleanupOrphanRecordings().catch(() => {});
+}
+
 async function main() {
-  await startParentWatchdog(() => cleanupOrphanRecordings());
+  await startParentWatchdog(shutdown);
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    process.once(signal, () => {
+      void shutdown().finally(() => process.exit(0));
+    });
+  }
   await cleanupOrphanRecordings();
   void cleanupOldTempFiles();
 

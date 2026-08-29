@@ -1,3 +1,7 @@
+// Timings here assume the dump path's polling interval.
+process.env.MCP_MOBILE_FAST_TREE = "0";
+
+
 import { jest } from "@jest/globals";
 import { parseFlowYaml } from "../../src/flow/parse.js";
 import { executeFlow } from "../../src/flow/runner.js";

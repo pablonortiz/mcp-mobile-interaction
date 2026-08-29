@@ -3,6 +3,12 @@ import { existsSync } from "fs";
 import { join } from "path";
 import { isUniformImage } from "../utils/image.js";
 import { run } from "../utils/exec.js";
+import {
+  ensureDaemon,
+  request,
+  isDaemonEnabled,
+  unavailableReason,
+} from "../platforms/ui-daemon.js";
 import * as android from "../platforms/android.js";
 import * as ios from "../platforms/ios.js";
 import { READ_ONLY } from "../utils/annotations.js";
@@ -11,6 +17,44 @@ interface Check {
   label: string;
   ok: boolean;
   detail: string;
+}
+
+/**
+ * Reports whether tree reads go through the on-device daemon (~4ms) or the
+ * shell command (~1900ms, and it fails on screens that never go idle).
+ */
+async function describeDaemon(
+  deviceId: string,
+): Promise<{ ok: boolean; detail: string }> {
+  if (!isDaemonEnabled()) {
+    return {
+      ok: true,
+      detail: "Disabled by MCP_MOBILE_FAST_TREE=0 — reads use `uiautomator dump` (~1.9s each).",
+    };
+  }
+
+  const blocked = unavailableReason(deviceId);
+  if (blocked) {
+    return {
+      ok: false,
+      detail: `Falling back to \`uiautomator dump\` on ${deviceId}: ${blocked}`,
+    };
+  }
+
+  try {
+    const port = await ensureDaemon(deviceId);
+    const started = Date.now();
+    await request(port, "dump 0");
+    return {
+      ok: true,
+      detail: `on-device daemon answering in ${Date.now() - started}ms (the shell command takes ~1900ms). While it runs, no other UiAutomator client — Appium, Maestro — can use ${deviceId}.`,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      detail: `Could not start the daemon on ${deviceId}: ${error instanceof Error ? error.message : String(error)}. Reads fall back to \`uiautomator dump\`.`,
+    };
+  }
 }
 
 export function registerDoctorTool(server: McpServer) {
@@ -119,6 +163,13 @@ export function registerDoctorTool(server: McpServer) {
                 : ""),
           });
           const uniform = await isUniformImage(await android.screenshot(first.id));
+          const daemonState = await describeDaemon(first.id);
+          checks.push({
+            label: "Fast UI reads",
+            ok: daemonState.ok,
+            detail: daemonState.detail,
+          });
+
           checks.push({
             label: "Screen capture",
             ok: !uniform,

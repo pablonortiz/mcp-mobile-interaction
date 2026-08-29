@@ -18,6 +18,28 @@ interface DaemonHandle {
 
 const daemons = new Map<string, DaemonHandle>();
 
+/**
+ * Devices where the daemon could not run. Without this, a device that cannot
+ * host it would pay a failed startup on every single read.
+ */
+const unavailable = new Map<string, { reason: string; until: number }>();
+const RETRY_AFTER_MS = 5 * 60_000;
+
+export function markUnavailable(deviceId: string, reason: string): void {
+  unavailable.set(deviceId, { reason, until: Date.now() + RETRY_AFTER_MS });
+}
+
+/** Why the daemon is not being used on this device, if it is not. */
+export function unavailableReason(deviceId: string): string | undefined {
+  const entry = unavailable.get(deviceId);
+  if (!entry) return undefined;
+  if (Date.now() >= entry.until) {
+    unavailable.delete(deviceId);
+    return undefined;
+  }
+  return entry.reason;
+}
+
 /** Where the compiled daemon lives inside the published package. */
 function jarPath(): string {
   return join(dirname(fileURLToPath(import.meta.url)), "..", "..", "assets", "uiautomator-daemon.jar");
@@ -30,6 +52,9 @@ function jarPath(): string {
  * package manager, and `rm` undoes it completely.
  */
 export async function ensureDaemon(deviceId: string): Promise<number> {
+  const blocked = unavailableReason(deviceId);
+  if (blocked) throw new Error(`The UI daemon is unavailable on ${deviceId}: ${blocked}`);
+
   const existing = daemons.get(deviceId);
   if (existing && (await isAlive(existing.localPort))) return existing.localPort;
   if (existing) daemons.delete(deviceId);
@@ -123,6 +148,20 @@ export async function stopAllDaemons(): Promise<void> {
   await Promise.all([...daemons.keys()].map((id) => stopDaemon(id)));
 }
 
+/**
+ * On by default. Reading the screen through the daemon costs ~4ms against
+ * ~1900ms for `uiautomator dump`, and it works on screens where the command
+ * fails outright ("could not get idle state").
+ *
+ * Set MCP_MOBILE_FAST_TREE=0 to opt out. The one reason to do so: the daemon
+ * holds UiAutomation exclusively, so nothing else on that device can use it
+ * while it runs — not Appium, not Maestro, not the shell command.
+ */
 export function isDaemonEnabled(): boolean {
-  return process.env.MCP_MOBILE_FAST_TREE === "1";
+  return process.env.MCP_MOBILE_FAST_TREE !== "0";
+}
+
+/** True once a daemon is running for this device. */
+export function hasDaemon(deviceId: string): boolean {
+  return daemons.has(deviceId);
 }

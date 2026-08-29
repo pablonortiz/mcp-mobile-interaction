@@ -187,6 +187,25 @@ Android is the primary target. iOS works on **simulators**; on physical devices 
 
 All iOS UI interaction requires `idb` (`brew install idb-companion && pip install fb-idb`); `doctor` reports whether it is present.
 
+## Fast UI Reads
+
+Tree reads go through a small daemon running on the device, not through `adb shell uiautomator dump`.
+
+The shell command restarts the instrumentation runtime and then waits a hardcoded second for idle on **every** call. Measured on device: 1.91 s of wall clock against 0.06 s of CPU — it is waiting, not working. On screens that never settle it does not just crawl, it fails: Android Settings' "About phone" answers `ERROR: could not get idle state` after 11 s, three times out of three.
+
+The daemon holds one `UiAutomation` connection open and answers over a socket:
+
+| | `uiautomator dump` | daemon |
+|---|---|---|
+| One tree read | ~1900 ms | **~4 ms** |
+| 21-step flow (same emulator) | 41.8 s | **4.3 s** |
+| 12 exploratory tool calls | 167.6 s | **7.6 s** |
+| "About phone" | fails | 50 elements in 233 ms |
+
+A 3.3 KB jar is pushed to `/data/local/tmp` and run with `app_process` — the same mechanism `scrcpy` uses, and the one `uiautomator dump` itself uses. **No APK is installed**, nothing is registered with the package manager, and `rm` undoes it entirely. No new dependencies: `adb`, as before.
+
+**The one caveat**: the daemon holds `UiAutomation` exclusively. While it runs, nothing else can use it on that device — not Appium, not Maestro, not the shell command. It is released when the server exits, and `MCP_MOBILE_FAST_TREE=0` disables it if you need those tools alongside. If it cannot start, reads fall back to the shell command automatically and `doctor` says so.
+
 ## Reliability
 
 Behaviour worth knowing, most of it the result of failures measured in real sessions:

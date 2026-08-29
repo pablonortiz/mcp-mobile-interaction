@@ -6,6 +6,10 @@
  * keycode mapping, device-list parsing, and screen-info parsing.
  */
 
+// This suite exercises the `uiautomator dump` path directly; the daemon has no
+// place in it and its startup would hang against mocked exec.
+process.env.MCP_MOBILE_FAST_TREE = "0";
+
 import { jest } from "@jest/globals";
 
 const mockRun = jest.fn<(file: string, args: string[], opts?: any) => Promise<string>>();
