@@ -19,6 +19,55 @@ interface Check {
   detail: string;
 }
 
+function message(error: unknown): string {
+  return error instanceof Error ? error.message.split("\n")[0] : String(error);
+}
+
+async function deviceProfileCheck(deviceId: string): Promise<Check> {
+  try {
+    const profile = await android.getDeviceProfile(deviceId);
+    return {
+      label: "Device profile",
+      ok: profile.apiLevel >= 30,
+      detail:
+        `${deviceId} — API ${profile.apiLevel}${profile.gpuMode ? `, GPU ${profile.gpuMode}` : ""}` +
+        (profile.apiLevel <= 29
+          ? ". Camera capture crashes the emulator HAL on API <=29 (SIGSEGV in the JPEG compressor) — use an API 30+ AVD for photo flows."
+          : ""),
+    };
+  } catch (error) {
+    return { label: "Device profile", ok: false, detail: message(error) };
+  }
+}
+
+async function fastReadsCheck(deviceId: string): Promise<Check> {
+  const state = await describeDaemon(deviceId);
+  return { label: "Fast UI reads", ok: state.ok, detail: state.detail };
+}
+
+/**
+ * Emulators can boot into a state where screencap returns a uniform (black)
+ * frame while the UI tree keeps working.
+ */
+async function screenCaptureCheck(deviceId: string): Promise<Check> {
+  try {
+    const uniform = await isUniformImage(await android.screenshot(deviceId));
+    return {
+      label: "Screen capture",
+      ok: !uniform,
+      detail: uniform
+        ? `screencap on ${deviceId} returns a uniform (likely black) frame — known emulator GPU issue. Screenshots will be useless until a cold boot; the UI tree is unaffected.`
+        : `screencap on ${deviceId} returns real pixels`,
+    };
+  } catch (error) {
+    return {
+      label: "Screen capture",
+      ok: false,
+      detail: `Could not read a screenshot from ${deviceId}: ${message(error)}`,
+    };
+  }
+}
+
 /**
  * Reports whether tree reads go through the on-device daemon (~4ms) or the
  * shell command (~1900ms, and it fails on screens that never go idle).
@@ -146,40 +195,22 @@ export function registerDoctorTool(server: McpServer) {
         });
       }
 
-      // Screen capture sanity — emulators can boot into a state where screencap
-      // returns a uniform (black) frame while the UI tree keeps working.
+      // Per-device checks. Each one is isolated: a failure in one used to take
+      // the others down with it and leave no trace of why they vanished.
       try {
         const devices = await android.listDevices();
         const first = devices.find((d) => d.status === "device");
         if (first) {
-          const profile = await android.getDeviceProfile(first.id);
-          checks.push({
-            label: "Device profile",
-            ok: profile.apiLevel >= 30,
-            detail:
-              `${first.id} — API ${profile.apiLevel}${profile.gpuMode ? `, GPU ${profile.gpuMode}` : ""}` +
-              (profile.apiLevel <= 29
-                ? ". Camera capture crashes the emulator HAL on API <=29 (SIGSEGV in the JPEG compressor) — use an API 30+ AVD for photo flows."
-                : ""),
-          });
-          const uniform = await isUniformImage(await android.screenshot(first.id));
-          const daemonState = await describeDaemon(first.id);
-          checks.push({
-            label: "Fast UI reads",
-            ok: daemonState.ok,
-            detail: daemonState.detail,
-          });
-
-          checks.push({
-            label: "Screen capture",
-            ok: !uniform,
-            detail: uniform
-              ? `screencap on ${first.id} returns a uniform (likely black) frame — known emulator GPU issue. Screenshots will be useless until a cold boot; the UI tree is unaffected.`
-              : `screencap on ${first.id} returns real pixels`,
-          });
+          checks.push(await deviceProfileCheck(first.id));
+          checks.push(await fastReadsCheck(first.id));
+          checks.push(await screenCaptureCheck(first.id));
         }
-      } catch {
-        // No device or capture failed — the devices check above already covers it.
+      } catch (error) {
+        checks.push({
+          label: "Device checks",
+          ok: false,
+          detail: `Could not inspect the connected device: ${message(error)}`,
+        });
       }
 
       // xcrun simctl
