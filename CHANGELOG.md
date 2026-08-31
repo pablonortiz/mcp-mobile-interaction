@@ -5,6 +5,23 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-08-31
+
+First run against a physical device (Galaxy Z Flip 7, Android 16) surfaced two
+bugs that no emulator shows.
+
+### Fixed
+
+- **Screenshots were unreadable on any device with more than one display.**
+  `screencap` prints a warning about the missing display id straight into the
+  image stream — 347 bytes of it — leaving the PNG corrupt. Foldables and
+  anything driving an external screen were affected. The image now starts at
+  the PNG signature regardless of what came before it.
+- `doctor` ran its per-device checks inside one `try` with an empty `catch`, so
+  the broken screenshot took two other checks down with it and the report
+  simply lacked them, with no indication anything had failed. Each check is now
+  isolated and reports its own failure.
+
 ## [2.0.0] - 2026-08-28
 
 Reading the screen went from ~1900 ms to ~4 ms, and several tools now answer
@@ -122,4 +139,5 @@ two before upgrading.
 
 - First public release.
 
+[2.0.1]: https://github.com/pablonortiz/mcp-mobile-interaction/releases/tag/v2.0.1
 [2.0.0]: https://github.com/pablonortiz/mcp-mobile-interaction/releases/tag/v2.0.0

@@ -47,7 +47,7 @@ import { stopAllDaemons } from "./platforms/ui-daemon.js";
 
 const server = new McpServer({
   name: "mcp-mobile-interaction",
-  version: "2.0.0",
+  version: "2.0.1",
 });
 
 registerListDevicesTool(server);
