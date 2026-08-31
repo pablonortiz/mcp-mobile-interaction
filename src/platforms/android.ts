@@ -157,12 +157,26 @@ async function resolveDevice(deviceId?: string): Promise<string> {
   return deviceId ?? (await getFirstDeviceId());
 }
 
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+
+/**
+ * Drops anything `screencap` prints before the image. Devices with more than
+ * one display — foldables, and anything driving an external screen — emit a
+ * warning about the missing display id straight into the stream, which leaves
+ * the PNG unreadable (347 bytes of it on a Galaxy Z Flip 7).
+ */
+function stripLeadingNoise(buffer: Buffer): Buffer {
+  if (buffer.subarray(0, 4).equals(PNG_SIGNATURE)) return buffer;
+  const start = buffer.indexOf(PNG_SIGNATURE);
+  return start > 0 ? buffer.subarray(start) : buffer;
+}
+
 export async function screenshot(deviceId?: string): Promise<Buffer> {
   const id = await resolveDevice(deviceId);
   return Promise.resolve(
     runBuffer("adb", ["-s", id, "exec-out", "screencap", "-p"], {
       timeout: 30_000,
-    }),
+    }).then(stripLeadingNoise),
   ).catch(async (error: unknown) => {
     if (!isDeviceGoneError(error)) throw error;
     if (cachedFirstDevice?.id === id) resetCaches();

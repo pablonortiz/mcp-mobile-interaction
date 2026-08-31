@@ -33,3 +33,19 @@ describe("isUniformImage", () => {
     expect(await isUniformImage(half)).toBe(false);
   });
 });
+
+describe("screencap noise", () => {
+  it("finds the PNG start after a leading warning", () => {
+    // A Galaxy Z Flip 7 prints 347 bytes about its two displays before the
+    // image, which leaves the PNG unreadable if taken at face value.
+    const warning = Buffer.from(
+      "[Warning] Multiple displays were found, but no display id was specified!\n",
+    );
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const noisy = Buffer.concat([warning, png]);
+
+    const start = noisy.indexOf(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    expect(start).toBe(warning.length);
+    expect(noisy.subarray(start)).toEqual(png);
+  });
+});
