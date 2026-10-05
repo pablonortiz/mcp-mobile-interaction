@@ -36,7 +36,7 @@ describe("scrollOnce", () => {
   });
 
   it("aims inside the scrollable container instead", async () => {
-    // The WMS home: a ScrollView whose centre is 1393, not the screen's 1200.
+    // A production app's home: a ScrollView whose centre is 1393, not the screen's 1200.
     const tree = [makeScrollable({ x: 0, y: 606, width: 1080, height: 1574 })];
     await scrollOnce("android", "down", "dev1", tree);
     const [, startY] = mockSwipe.mock.calls[0];

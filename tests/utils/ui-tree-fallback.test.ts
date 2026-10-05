@@ -38,7 +38,7 @@ async function realPng(): Promise<Buffer> {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockGetForegroundApp.mockResolvedValue({ package: "in.janis.wms.beta" });
+  mockGetForegroundApp.mockResolvedValue({ package: "com.example.stock.beta" });
 });
 
 describe("degradedUiTreeResponse", () => {
@@ -53,7 +53,7 @@ describe("degradedUiTreeResponse", () => {
 
     const text = response.content.find((part) => part.type === "text");
     expect(text?.text).toContain("never went idle");
-    expect(text?.text).toContain("in.janis.wms.beta");
+    expect(text?.text).toContain("com.example.stock.beta");
     expect(response.content.some((part) => part.type === "image")).toBe(true);
     expect(response.isError).toBe(true);
   });

@@ -37,7 +37,7 @@ function makeElement(
   } as UiElement;
 }
 
-// The real geometry from the WMS home screen: a menu card whose centre falls
+// The real geometry from a production app's home screen: a menu card whose centre falls
 // under React Native's LogBox banner.
 const CARD = makeElement(", Control de inventario", { x: 581, y: 1861, width: 436, height: 319 });
 const CARD_LABEL = makeElement("Control de inventario", { x: 625, y: 2153, width: 348, height: 27 }, { clickable: false, type: "TextView" });

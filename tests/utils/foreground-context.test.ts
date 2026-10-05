@@ -8,8 +8,8 @@ function makeTree(...labels: string[]): UiElement[] {
 describe("describeForegroundContext", () => {
   it("stays quiet when the app under test is on screen", () => {
     const result = describeForegroundContext(
-      "in.janis.wms.beta",
-      "in.janis.wms.beta",
+      "com.example.stock.beta",
+      "com.example.stock.beta",
       [],
     );
     expect(result.offApp).toBe(false);
@@ -19,11 +19,11 @@ describe("describeForegroundContext", () => {
   it("names the app that took over", () => {
     const result = describeForegroundContext(
       "com.other.app",
-      "in.janis.wms.beta",
+      "com.example.stock.beta",
       [],
     );
     expect(result.offApp).toBe(true);
-    expect(result.note).toContain("com.other.app, not in.janis.wms.beta");
+    expect(result.note).toContain("com.other.app, not com.example.stock.beta");
   });
 
   it("recognizes the launcher by package", () => {

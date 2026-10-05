@@ -3,12 +3,12 @@ import { parseFlowYaml, normalizeSteps } from "../../src/flow/parse.js";
 describe("parseFlowYaml", () => {
   it("parses a flow with the Maestro appId header", () => {
     const flow = parseFlowYaml(`
-appId: in.janis.delivery.beta
+appId: com.example.courier.beta
 ---
 - launchApp
 - tapOn: "Delivery"
 `);
-    expect(flow.appId).toBe("in.janis.delivery.beta");
+    expect(flow.appId).toBe("com.example.courier.beta");
     expect(flow.steps).toHaveLength(2);
     expect(flow.steps[0]).toMatchObject({ kind: "launchApp", stopApp: true, clearState: false });
     expect(flow.steps[1]).toMatchObject({

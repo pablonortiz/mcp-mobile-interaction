@@ -645,7 +645,7 @@ describe("launchApp", () => {
     mockRun.mockImplementation(async (_file, args) => {
       const joined = (args as string[]).join(" ");
       if (joined.includes("pm list packages")) {
-        return "package:in.janis.wms.beta\npackage:in.janis.wms.qa";
+        return "package:com.example.stock.beta\npackage:com.example.stock.qa";
       }
       if (joined.includes("monkey")) return "";
       if (joined.includes("mCurrentFocus") || joined.includes("dumpsys")) {
@@ -654,7 +654,7 @@ describe("launchApp", () => {
       throw new Error("not available");
     });
     await expect(
-      androidMod.launchApp("in.janis.wms.prod", "dev1"),
+      androidMod.launchApp("com.example.stock.prod", "dev1"),
     ).rejects.toThrow(/not installed. Installed and similar/);
   }, 20_000);
 });

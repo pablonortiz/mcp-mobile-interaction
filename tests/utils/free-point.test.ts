@@ -13,7 +13,7 @@ function makeElement(bounds: { x: number; y: number; width: number; height: numb
   } as UiElement;
 }
 
-// Real geometry from the WMS home: a card under React Native's LogBox banner.
+// Real geometry from a production app's home: a card under React Native's LogBox banner.
 const CARD = makeElement({ x: 581, y: 1861, width: 436, height: 319 });
 const BANNER = makeElement({ x: 26, y: 2006, width: 1028, height: 125 });
 

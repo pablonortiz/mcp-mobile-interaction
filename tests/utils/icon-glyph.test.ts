@@ -2,7 +2,7 @@ import { isIconGlyph } from "../../src/utils/xml.js";
 
 describe("isIconGlyph", () => {
   it("recognizes the Private Use Area glyphs icon fonts use", () => {
-    // Both observed live in the WMS app, printing as empty strings.
+    // Both observed live in a production app, printing as empty strings.
     expect(isIconGlyph("")).toBe(true);
     expect(isIconGlyph("")).toBe(true);
   });
